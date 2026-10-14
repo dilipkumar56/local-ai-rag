@@ -1,0 +1,17 @@
+Azure Virtual Network (VNet)
+
+An Azure Virtual Network is a private network in Azure.
+
+A VNet allows Azure resources to communicate with each other securely.
+
+A VNet contains one or more subnets.
+
+A subnet is a range of IP addresses within a VNet.
+
+VNet peering allows two Azure virtual networks to communicate with each other over Microsoft's network.
+
+VNet peering does not require a VPN gateway.
+
+Azure VPN Gateway is used to establish encrypted connectivity between Azure virtual networks or between Azure and on-premises networks.
+
+A Network Security Group (NSG) can be used to control inbound and outbound network traffic associated with Azure resources.
