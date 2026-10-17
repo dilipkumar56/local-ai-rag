@@ -1,29 +1,14 @@
-from langchain_ollama import OllamaEmbeddings
-from langchain_chroma import Chroma
+"""Run a cited retrieval query against the local Chroma database."""
 
-# Connect to the same embedding model
-embeddings = OllamaEmbeddings(
-    model="nomic-embed-text"
-)
+from rag import format_citation, retrieve
 
-# Connect to our existing Chroma database
-vector_store = Chroma(
-    persist_directory="data/chroma",
-    embedding_function=embeddings
-)
 
-# Ask a question
-question = "How can two Azure VNets communicate?"
+def main() -> None:
+    question = input("Question: ").strip()
+    for index, document in enumerate(retrieve(question), start=1):
+        print(f"\n--- Result {index}: {format_citation(document)} ---")
+        print(document.page_content)
 
-# Search for the 2 most relevant chunks
-results = vector_store.similarity_search(
-    question,
-    k=2
-)
 
-print(f"Question: {question}")
-
-for i, document in enumerate(results):
-    print(f"\n--- Result {i + 1} ---")
-    print(document.page_content)
-    print("Metadata:", document.metadata)
+if __name__ == "__main__":
+    main()
