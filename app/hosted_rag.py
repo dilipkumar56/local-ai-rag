@@ -1,32 +1,72 @@
-"""RAG operations for the publicly hosted AZ-104 study assistant."""
+"""On-demand retrieval and Gemini answers for the hosted AZ-104 study assistant."""
 
-import hashlib
-import threading
-import time
+import logging
+import math
+import re
+from collections import Counter
+from functools import lru_cache
 
 from google import genai
 from google.genai.errors import APIError
 from google.genai import types
-from langchain_chroma import Chroma
 from langchain_core.documents import Document
-from langchain_core.embeddings import Embeddings
 from langchain_core.prompts import ChatPromptTemplate
 
 from az104_sources import (
     MICROSOFT_LEARN_SOURCES,
-    load_official_sources,
+    load_official_source,
     split_official_sources,
 )
-from settings import PROJECT_ROOT
 
-AZ104_CHROMA_DIR = PROJECT_ROOT / "data" / "chroma_az104"
-AZ104_COLLECTION = "microsoft_learn_az104_gemini"
-EMBEDDING_BATCH_SIZE = 32
-EMBEDDING_INPUT_INTERVAL_SECONDS = 0.75
+logger = logging.getLogger(__name__)
+
 DEFAULT_CHAT_MODEL = "gemini-2.5-flash"
-DEFAULT_EMBEDDING_MODEL = "gemini-embedding-001"
-_EMBEDDING_RATE_LOCK = threading.Lock()
-_LAST_EMBEDDING_REQUEST = 0.0
+STOP_WORDS = {
+    "a",
+    "about",
+    "an",
+    "and",
+    "are",
+    "azure",
+    "can",
+    "could",
+    "does",
+    "explain",
+    "for",
+    "from",
+    "how",
+    "i",
+    "in",
+    "is",
+    "it",
+    "me",
+    "of",
+    "on",
+    "or",
+    "should",
+    "tell",
+    "the",
+    "to",
+    "use",
+    "what",
+    "when",
+    "where",
+    "which",
+    "why",
+    "with",
+}
+QUERY_EXPANSIONS = {
+    "grs": ("storage", "redundancy", "geo", "redundant"),
+    "lrs": ("storage", "redundancy", "locally", "redundant"),
+    "nsg": ("network", "security", "groups"),
+    "nsgs": ("network", "security", "groups"),
+    "rbac": ("role", "based", "access", "control"),
+    "udr": ("user", "defined", "route"),
+    "vm": ("virtual", "machines"),
+    "vms": ("virtual", "machines"),
+    "vnet": ("virtual", "network"),
+    "vnets": ("virtual", "network"),
+}
 
 AZ104_PROMPT = ChatPromptTemplate.from_messages(
     [
@@ -54,151 +94,133 @@ Study question: {question}""",
 )
 
 
-class GeminiEmbeddings(Embeddings):
-    """Gemini embeddings adapter with distinct document and query tasks."""
+def _tokens(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9]+", text.lower())
 
-    def __init__(self, client: genai.Client, model: str) -> None:
-        self.client = client
-        self.model = model
 
-    def _embed_content(self, contents: str | list[str], task_type: str):
-        global _LAST_EMBEDDING_REQUEST
-        with _EMBEDDING_RATE_LOCK:
-            elapsed = time.monotonic() - _LAST_EMBEDDING_REQUEST
-            input_count = len(contents) if isinstance(contents, list) else 1
-            minimum_interval = EMBEDDING_INPUT_INTERVAL_SECONDS * input_count
-            delay = minimum_interval - elapsed
-            if delay > 0:
-                time.sleep(delay)
-            try:
-                return self.client.models.embed_content(
-                    model=self.model,
-                    contents=contents,
-                    config=types.EmbedContentConfig(task_type=task_type),
+def _query_terms(question: str) -> set[str]:
+    terms = set(_tokens(question))
+    terms.difference_update(STOP_WORDS)
+    for token in tuple(terms):
+        terms.update(QUERY_EXPANSIONS.get(token, ()))
+    return terms
+
+
+def rank_source_urls(question: str, limit: int = 5) -> list[str]:
+    """Select likely Learn pages from URL topics without calling an embedding API."""
+    terms = _query_terms(question)
+    scored_sources = []
+    for index, url in enumerate(MICROSOFT_LEARN_SOURCES):
+        path_terms = set(_tokens(url.rsplit("/", 1)[-1].replace("-", " ")))
+        path_terms.update(_tokens(url.split("learn.microsoft.com/", 1)[-1].replace("/", " ")))
+        path_terms.difference_update({"learn", "microsoft", "com", "en", "us"})
+        score = len(terms & path_terms)
+        if score:
+            scored_sources.append((score, -index, url))
+
+    if not scored_sources:
+        fallback = next(
+            (
+                url
+                for url in MICROSOFT_LEARN_SOURCES
+                if "study-guides/az-104" in url
+            ),
+            MICROSOFT_LEARN_SOURCES[0],
+        )
+        return [fallback]
+
+    scored_sources.sort(reverse=True)
+    return [url for _, _, url in scored_sources[:limit]]
+
+
+@lru_cache(maxsize=len(MICROSOFT_LEARN_SOURCES))
+def _load_source_chunks(url: str) -> tuple[Document, ...]:
+    """Fetch and split one selected Learn page, caching it for this process."""
+    return tuple(split_official_sources([load_official_source(url)]))
+
+
+def clear_learn_source_cache() -> None:
+    """Discard cached page contents so the next question fetches fresh Learn pages."""
+    _load_source_chunks.cache_clear()
+
+
+def retrieve_relevant_documents(
+    question: str,
+    k: int = 5,
+    source_limit: int = 5,
+) -> list[Document]:
+    """Fetch only topic-matched pages, then rank their chunks with local text search."""
+    candidate_chunks: list[Document] = []
+    failures: list[str] = []
+    for url in rank_source_urls(question, source_limit):
+        try:
+            candidate_chunks.extend(_load_source_chunks(url))
+        except (OSError, ValueError) as error:
+            failures.append(f"{url}: {error}")
+
+    if failures:
+        logger.warning(
+            "Some selected Microsoft Learn pages could not be loaded:\n%s",
+            "\n".join(failures),
+        )
+    if not candidate_chunks:
+        if failures:
+            raise RuntimeError(
+                "Could not load any selected Microsoft Learn pages.\n" + "\n".join(failures)
+            )
+        raise RuntimeError("No chunks were found in the selected Microsoft Learn pages.")
+
+    query_terms = _query_terms(question)
+    if not query_terms:
+        return candidate_chunks[:k]
+
+    document_frequency = Counter(
+        term
+        for document in candidate_chunks
+        for term in query_terms
+        if term in set(_tokens(document.page_content))
+    )
+
+    def score(document: Document) -> float:
+        counts = Counter(_tokens(document.page_content))
+        total = 0.0
+        for term in query_terms:
+            frequency = counts[term]
+            if frequency:
+                inverse_frequency = math.log(
+                    1 + len(candidate_chunks) / (1 + document_frequency[term])
                 )
-            finally:
-                _LAST_EMBEDDING_REQUEST = time.monotonic()
+                total += (1 + math.log(frequency)) * inverse_frequency
+        return total
 
-    def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        vectors: list[list[float]] = []
-        for start in range(0, len(texts), EMBEDDING_BATCH_SIZE):
-            response = self._embed_content(
-                texts[start : start + EMBEDDING_BATCH_SIZE],
-                "RETRIEVAL_DOCUMENT",
-            )
-            if not response.embeddings or any(
-                not embedding.values for embedding in response.embeddings
-            ):
-                raise RuntimeError("Gemini returned an incomplete batch of document embeddings.")
-            vectors.extend(
-                [embedding.values for embedding in response.embeddings or []]
-            )
-        if len(vectors) != len(texts):
-            raise RuntimeError("Gemini returned an unexpected number of document embeddings.")
-        return vectors
-
-    def embed_query(self, text: str) -> list[float]:
-        response = self._embed_content(text, "RETRIEVAL_QUERY")
-        if not response.embeddings or not response.embeddings[0].values:
-            raise RuntimeError("Gemini returned no embedding for the search query.")
-        return response.embeddings[0].values
-
-
-def build_az104_store(
-    api_key: str,
-    embedding_model: str,
-    refresh: bool = False,
-) -> tuple[Chroma, int]:
-    """Reuse the persisted index or create it from current official Learn pages."""
-    client = genai.Client(api_key=api_key)
-    embeddings = GeminiEmbeddings(client, embedding_model)
-    index_metadata = {
-        "embedding_provider": "gemini",
-        "embedding_model": embedding_model,
-    }
-    expected_metadata = {**index_metadata, "index_complete": True}
-
-    AZ104_CHROMA_DIR.mkdir(parents=True, exist_ok=True)
-    existing_store = Chroma(
-        collection_name=AZ104_COLLECTION,
-        persist_directory=str(AZ104_CHROMA_DIR),
-        embedding_function=embeddings,
-    )
-    current_metadata = existing_store._collection.metadata or {}
-    if refresh or any(current_metadata.get(key) != value for key, value in index_metadata.items()):
-        existing_store.delete_collection()
-        store = Chroma(
-            collection_name=AZ104_COLLECTION,
-            persist_directory=str(AZ104_CHROMA_DIR),
-            embedding_function=embeddings,
-            collection_metadata={**index_metadata, "index_complete": False},
-        )
-    else:
-        store = existing_store
-
-    if not refresh and store._collection.metadata == expected_metadata:
-        return store, len(MICROSOFT_LEARN_SOURCES)
-
-    documents = load_official_sources()
-    chunks = split_official_sources(documents)
-    if not chunks:
-        raise RuntimeError("No AZ-104 reference chunks were generated.")
-    stored_ids = set(store._collection.get(include=[])["ids"])
-    pending_chunks = [
-        (chunk, _chunk_id(chunk))
-        for chunk in chunks
-    ]
-    pending_chunks = [(chunk, chunk_id) for chunk, chunk_id in pending_chunks if chunk_id not in stored_ids]
-    if store._collection.metadata != {**index_metadata, "index_complete": False}:
-        store._collection.modify(metadata={**index_metadata, "index_complete": False})
-
-    for start in range(0, len(pending_chunks), EMBEDDING_BATCH_SIZE):
-        batch = pending_chunks[start : start + EMBEDDING_BATCH_SIZE]
-        store.add_documents(
-            documents=[chunk for chunk, _ in batch],
-            ids=[chunk_id for _, chunk_id in batch],
-        )
-    store._collection.modify(metadata=expected_metadata)
-    return store, len(documents)
-
-
-def _chunk_id(document: Document) -> str:
-    """Generate a stable Chroma ID so interrupted indexing can resume safely."""
-    identity = (
-        f"{document.metadata.get('url', '')}\n"
-        f"{document.metadata.get('chunk', '')}\n"
-        f"{document.page_content}"
-    )
-    return hashlib.sha256(identity.encode("utf-8")).hexdigest()
+    ranked = sorted(candidate_chunks, key=score, reverse=True)
+    return ranked[:k]
 
 
 def gemini_api_help(error: APIError) -> str:
-    """Provide useful setup guidance without displaying API details to app visitors."""
+    """Provide setup guidance without displaying API details to app visitors."""
     message = str(error).lower()
     if "429" in message or "resource_exhausted" in message or "quota" in message:
         return (
-            "Gemini's API quota or rate limit was reached while embedding Learn documents. "
-            "Embedding inputs are paced below the 100-per-minute free-tier quota, and completed "
-            "chunks resume when storage is retained. Wait about a minute before retrying; avoid "
-            "repeated restarts. "
-            "Check the Gemini Embedding model's active quota in Google AI Studio."
+            "Gemini's chat API quota or rate limit was reached. Wait before retrying and check "
+            "the active chat-model quota in Google AI Studio. This app no longer calls Gemini's "
+            "embedding API to build a full index."
         )
     return (
         "Gemini could not complete this request. Check that GEMINI_API_KEY is valid, the selected "
-        "chat and embedding models are available to your project, and the Generative Language "
-        "API is enabled. See the Streamlit app logs for the provider error."
+        "chat model is available to your project, and the Generative Language API is enabled. "
+        "See the Streamlit app logs for the provider error."
     )
 
 
 def answer_az104_question(
     question: str,
-    store: Chroma,
     api_key: str,
     chat_model: str,
     chat_history: list[tuple[str, str]] | None = None,
     k: int = 5,
 ) -> tuple[str, list[Document]]:
-    """Answer a question from retrieved Microsoft Learn excerpts."""
+    """Answer using freshly selected and cached Microsoft Learn excerpts."""
     history = chat_history or []
     previous_question = next(
         (content for role, content in reversed(history) if role == "user"),
@@ -208,14 +230,7 @@ def answer_az104_question(
     if previous_question and len(question.split()) <= 5:
         search_query = f"{previous_question}\n{question}"
 
-    documents = store.similarity_search(search_query, k=k)
-    if not documents:
-        return (
-            "I couldn't find relevant information in the indexed Microsoft Learn sources. "
-            "Try asking about an AZ-104 exam objective.",
-            [],
-        )
-
+    documents = retrieve_relevant_documents(search_query, k=k)
     history_text = "\n".join(f"{role.title()}: {content}" for role, content in history[-6:])
     context = "\n\n".join(
         f"Source: {document.metadata['source']} ({document.metadata['url']})\n"

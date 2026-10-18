@@ -45,17 +45,16 @@ This local workflow uses Ollama and your own documents; it is separate from the 
 
 ## Run the AZ-104 Streamlit app locally
 
-The hosted app downloads selected Microsoft Learn pages and uses Gemini to build an AZ-104 retrieval index. The index is stored locally and reused after its first build. Set the Gemini API key in the current PowerShell session (replace the placeholder; do not commit a real key):
+The app chooses relevant pages from its curated Microsoft Learn source list when a question is asked. It fetches and locally caches only those pages, then ranks their text chunks with keyword search. It does not create a full vector index and does not call Gemini's embedding API. Gemini is used only to generate the answer from the selected excerpts. Set the Gemini API key in the current PowerShell session (replace the placeholder; do not commit a real key):
 
 ```powershell
 $env:GEMINI_API_KEY = "your-gemini-api-key"
 ```
 
-The default models are `gemini-2.5-flash` for answers and `gemini-embedding-001` for embeddings. To use different Gemini models, set:
+The default chat model is `gemini-2.5-flash`. To use a different Gemini chat model, set:
 
 ```powershell
 $env:GEMINI_CHAT_MODEL = "your-gemini-chat-model"
-$env:GEMINI_EMBEDDING_MODEL = "your-gemini-embedding-model"
 ```
 
 Start the interactive study app:
@@ -79,21 +78,20 @@ Streamlit prints a local URL to open in your browser. Use the chat box to ask qu
 
 5. Deploy the app and share the public URL Streamlit provides.
 
-The public app uses Gemini for **both** chat and embeddings. Anyone with the URL can submit questions that use the project's Gemini API quota. Review Google's [Gemini API pricing](https://ai.google.dev/gemini-api/docs/pricing) and [rate limits](https://ai.google.dev/gemini-api/docs/rate-limits) before sharing widely; free-tier model availability and limits vary. Deployment authentication is not configured by default.
+The public app uses Gemini for **chat only**. It does not make Gemini embedding calls or build a complete vector index at startup. Anyone with the URL can submit questions that use the project's Gemini chat quota. Review Google's [Gemini API pricing](https://ai.google.dev/gemini-api/docs/pricing) and [rate limits](https://ai.google.dev/gemini-api/docs/rate-limits) before sharing widely; free-tier model availability and limits vary. Deployment authentication is not configured by default.
 
-### API rate-limit errors during startup
+### Source retrieval and caching
 
-The initial study index contains about 982 text chunks. Gemini embedding calls are paced by the
-number of texts in each batch, at roughly 80 chunks per minute, so a full first index can take
-around 13 minutes. Completed chunks are saved with stable IDs so indexing can resume after an
-interrupted run when Streamlit's local app storage is retained. Avoid repeatedly rebooting the app
-or selecting **Refresh Learn content** while indexing. If startup reports a rate limit, check the
-Gemini embedding model's active quota in AI Studio and the **Manage app** logs; Gemini quotas are
-shared by all API keys in the same Google Cloud project.
+For each question the app matches the question against curated Learn page topics, fetches only the
+best-matching pages, and ranks their text locally. Fetched pages are cached in the running app
+process and reused when selected again. **Refresh Learn content** clears that process cache.
+Retrieval uses keyword matching rather than embeddings, so it avoids Gemini's embedding quota;
+Gemini chat still uses tokens to generate the answer. Topic matching is less semantic than vector
+search, so ask about specific Azure services or AZ-104 objectives and check the linked sources.
 
 ## Official AZ-104 content
 
-The app's curated URLs are maintained in `app/az104_sources.py`. It fetches those public Microsoft Learn pages at runtime rather than committing copies of their content. Use **Refresh Learn content** in the sidebar to rebuild the index. Microsoft Learn pages can change, so check the linked source before relying on a study answer.
+The app's curated URLs are maintained in `app/az104_sources.py`. It fetches those public Microsoft Learn pages at runtime rather than committing copies of their content. Use **Refresh Learn content** in the sidebar to clear the page cache. Microsoft Learn pages can change, so check the linked source before relying on a study answer.
 
 The app currently covers the certification study guide and selected topics across identity and governance, storage, compute, networking, monitoring, backup, and Azure Resource Manager. It is an exam-preparation aid, not an official Microsoft product, exam dump, or guarantee of passing. Follow the official [AZ-104 study guide](https://learn.microsoft.com/en-us/credentials/certifications/resources/study-guides/az-104) for the current skills measured.
 

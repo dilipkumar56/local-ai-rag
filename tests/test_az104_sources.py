@@ -5,10 +5,37 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 
-from az104_sources import MICROSOFT_LEARN_SOURCES, load_official_sources, split_official_sources
+from az104_sources import (
+    MICROSOFT_LEARN_SOURCES,
+    load_official_source,
+    load_official_sources,
+    split_official_sources,
+)
 
 
 class OfficialSourceTests(unittest.TestCase):
+    @patch("az104_sources.requests.get")
+    def test_loads_only_the_requested_curated_page(self, get: Mock) -> None:
+        url = "https://learn.microsoft.com/en-us/azure/role-based-access-control/overview"
+        get.return_value = Mock(
+            url=url,
+            text="<html><main><article><h1>Azure RBAC</h1><p>Role assignments</p>"
+            "</article></main></html>",
+        )
+        get.return_value.raise_for_status.return_value = None
+
+        document = load_official_source(url)
+
+        self.assertEqual(document.metadata["source"], "Azure RBAC")
+        get.assert_called_once()
+        self.assertEqual(get.call_args.args[0], url)
+
+    def test_refuses_to_fetch_a_url_outside_the_curated_list(self) -> None:
+        with patch("az104_sources.requests.get") as get:
+            with self.assertRaisesRegex(ValueError, "curated"):
+                load_official_source("https://example.com/not-a-learn-page")
+        get.assert_not_called()
+
     @patch("az104_sources.requests.get")
     def test_loads_official_learn_article_with_citation_metadata(self, get: Mock) -> None:
         get.return_value = Mock(

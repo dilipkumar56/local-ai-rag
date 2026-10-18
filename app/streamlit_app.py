@@ -5,14 +5,12 @@ import os
 
 import streamlit as st
 from google.genai.errors import APIError
-from langchain_chroma import Chroma
 from streamlit.errors import StreamlitSecretNotFoundError
 
 from hosted_rag import (
     DEFAULT_CHAT_MODEL,
-    DEFAULT_EMBEDDING_MODEL,
     answer_az104_question,
-    build_az104_store,
+    clear_learn_source_cache,
     gemini_api_help,
 )
 
@@ -42,18 +40,14 @@ st.info(
 
 api_key = config_value("GEMINI_API_KEY")
 chat_model = config_value("GEMINI_CHAT_MODEL", DEFAULT_CHAT_MODEL)
-embedding_model = config_value("GEMINI_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL)
 
 with st.sidebar:
     st.header("Study tools")
-    st.write("Knowledge base: selected official Microsoft Learn pages for AZ-104.")
-    st.caption(
-        "The Learn index is reused after its first build. Refreshing makes embedding API requests."
-    )
+    st.write("Retrieval: relevant official Microsoft Learn pages are fetched when you ask.")
+    st.caption("Retrieved pages are cached for this running app; no Gemini embedding API calls are made.")
     if st.button("Refresh Learn content", use_container_width=True):
-        st.cache_resource.clear()
-        st.session_state.refresh_index = True
-        st.rerun()
+        clear_learn_source_cache()
+        st.success("Cached Learn pages cleared. Pages will be fetched again when needed.")
     if st.button("Clear chat", use_container_width=True):
         st.session_state.messages = []
         st.rerun()
@@ -75,27 +69,6 @@ if not api_key:
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-
-@st.cache_resource(
-    ttl=21_600,
-    show_spinner="Loading Microsoft Learn pages and building the study index...",
-)
-def get_store(
-    key: str, embedding: str, refresh: bool
-) -> tuple[Chroma, int]:
-    return build_az104_store(key, embedding, refresh)
-
-
-refresh_index = st.session_state.pop("refresh_index", False)
-try:
-    store, source_count = get_store(api_key, embedding_model, refresh_index)
-except APIError as error:
-    logger.exception("Gemini API failed while preparing the AZ-104 study index.")
-    st.error(gemini_api_help(error))
-    st.stop()
-with st.sidebar:
-    st.caption(f"{source_count} official source pages indexed.")
-
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
@@ -113,7 +86,6 @@ if question:
             try:
                 answer, documents = answer_az104_question(
                     question,
-                    store,
                     api_key,
                     chat_model,
                     [
@@ -124,6 +96,10 @@ if question:
             except APIError as error:
                 logger.exception("Gemini API failed while answering an AZ-104 question.")
                 answer = gemini_api_help(error)
+                documents = []
+            except RuntimeError as error:
+                logger.exception("Could not retrieve Microsoft Learn content.")
+                answer = f"Could not retrieve the reference content: {error}"
                 documents = []
         st.markdown(answer)
         citations = []

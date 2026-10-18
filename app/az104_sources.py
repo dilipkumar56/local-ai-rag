@@ -99,6 +99,13 @@ def _load_source(url: str, timeout: int) -> Document:
     )
 
 
+def load_official_source(url: str, timeout: int = 20) -> Document:
+    """Fetch and extract one curated Microsoft Learn page."""
+    if url not in MICROSOFT_LEARN_SOURCES:
+        raise ValueError("URL is not in the curated Microsoft Learn source list.")
+    return _load_source(url, timeout)
+
+
 def load_official_sources(timeout: int = 20) -> list[Document]:
     """Fetch and extract the current text of curated Microsoft Learn pages."""
     documents: list[Document] = []
