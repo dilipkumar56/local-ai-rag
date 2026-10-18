@@ -1,16 +1,22 @@
 """Interactive, publicly deployable AZ-104 study assistant."""
 
 import os
+import logging
 
 import streamlit as st
+from google.genai.errors import APIError
 from langchain_chroma import Chroma
-from openai import RateLimitError
 from streamlit.errors import StreamlitSecretNotFoundError
 
-from hosted_rag import answer_az104_question, build_az104_store, rate_limit_help
+from hosted_rag import (
+    DEFAULT_CHAT_MODEL,
+    DEFAULT_EMBEDDING_MODEL,
+    answer_az104_question,
+    build_az104_store,
+    gemini_api_help,
+)
 
-DEFAULT_CHAT_MODEL = "gpt-4o-mini"
-DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
+logger = logging.getLogger(__name__)
 
 
 def config_value(name: str, default: str = "") -> str:
@@ -26,23 +32,23 @@ def config_value(name: str, default: str = "") -> str:
 
 st.set_page_config(page_title="AZ-104 Study Assistant", page_icon="☁️", layout="centered")
 st.title("AZ-104 Study Assistant")
-st.caption("Ask Azure Administrator questions grounded in official Microsoft Learn content.")
+st.caption("Ask Azure Administrator questions grounded in official Microsoft Learn content, powered by Gemini.")
 st.info(
     "This is a study aid, not an exam dump or a guarantee of passing. "
     "Check the linked Microsoft Learn sources for the latest details."
 )
 
-api_key = config_value("OPENAI_API_KEY")
-base_url = config_value("OPENAI_BASE_URL") or None
-chat_model = config_value("OPENAI_CHAT_MODEL", DEFAULT_CHAT_MODEL)
-embedding_model = config_value("OPENAI_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL)
+api_key = config_value("GEMINI_API_KEY")
+chat_model = config_value("GEMINI_CHAT_MODEL", DEFAULT_CHAT_MODEL)
+embedding_model = config_value("GEMINI_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL)
 
 with st.sidebar:
     st.header("Study tools")
     st.write("Knowledge base: selected official Microsoft Learn pages for AZ-104.")
-    st.caption("Sources are fetched and indexed when this app starts; refreshing may use API credits.")
+    st.caption("The Learn index is reused after its first build. Refreshing makes embedding API requests.")
     if st.button("Refresh Learn content", use_container_width=True):
         st.cache_resource.clear()
+        st.session_state.refresh_index = True
         st.rerun()
     if st.button("Clear chat", use_container_width=True):
         st.session_state.messages = []
@@ -58,8 +64,7 @@ with st.sidebar:
 
 if not api_key:
     st.warning(
-        "Add `OPENAI_API_KEY` to your environment or Streamlit deployment secrets to enable the tutor. "
-        "If your provider uses a compatible endpoint, also set `OPENAI_BASE_URL` and its model names."
+        "Add `GEMINI_API_KEY` to your environment or Streamlit deployment secrets to enable the tutor."
     )
     st.stop()
 
@@ -68,15 +73,17 @@ if "messages" not in st.session_state:
 
 @st.cache_resource(ttl=21_600, show_spinner="Loading Microsoft Learn pages and building the study index...")
 def get_store(
-    key: str, endpoint: str | None, embedding: str
+    key: str, embedding: str, refresh: bool
 ) -> tuple[Chroma, int]:
-    return build_az104_store(key, endpoint, embedding)
+    return build_az104_store(key, embedding, refresh)
 
 
+refresh_index = st.session_state.pop("refresh_index", False)
 try:
-    store, source_count = get_store(api_key, base_url, embedding_model)
-except RateLimitError as error:
-    st.error(rate_limit_help(error))
+    store, source_count = get_store(api_key, embedding_model, refresh_index)
+except APIError as error:
+    logger.exception("Gemini API failed while preparing the AZ-104 study index.")
+    st.error(gemini_api_help(error))
     st.stop()
 with st.sidebar:
     st.caption(f"{source_count} official source pages indexed.")
@@ -95,17 +102,21 @@ if question:
 
     with st.chat_message("assistant"):
         with st.spinner("Searching Microsoft Learn and preparing an answer..."):
-            answer, documents = answer_az104_question(
-                question,
-                store,
-                api_key,
-                base_url,
-                chat_model,
-                [
-                    (message["role"], message["content"])
-                    for message in st.session_state.messages[:-1]
-                ],
-            )
+            try:
+                answer, documents = answer_az104_question(
+                    question,
+                    store,
+                    api_key,
+                    chat_model,
+                    [
+                        (message["role"], message["content"])
+                        for message in st.session_state.messages[:-1]
+                    ],
+                )
+            except APIError as error:
+                logger.exception("Gemini API failed while answering an AZ-104 question.")
+                answer = gemini_api_help(error)
+                documents = []
         st.markdown(answer)
         citations = []
         seen_urls: set[str] = set()

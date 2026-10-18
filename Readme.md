@@ -3,7 +3,7 @@
 This repository includes two ways to use a document-grounded Azure assistant:
 
 - A local command-line RAG chat backed by Ollama and your own `.txt`/`.pdf` files.
-- A Streamlit AZ-104 study assistant that retrieves current content from selected official Microsoft Learn pages and uses a hosted OpenAI-compatible model API. The UI can be deployed publicly.
+- A Streamlit AZ-104 study assistant that retrieves current content from selected official Microsoft Learn pages and uses the Gemini API for chat and embeddings. The UI can be deployed publicly.
 
 The assistant uses retrieval-augmented generation (RAG); it does **not** fine-tune or retrain a model. Answers are generated from retrieved reference excerpts and include links to the Microsoft Learn sources used.
 
@@ -11,7 +11,7 @@ The assistant uses retrieval-augmented generation (RAG); it does **not** fine-tu
 
 - Python 3.11 or later.
 - For the local CLI assistant: [Ollama](https://ollama.com/download).
-- For the Streamlit assistant: an OpenAI-compatible API account, an API key, and a model provider that supports both chat completions and embeddings.
+- For the Streamlit assistant: a Gemini API key from [Google AI Studio](https://aistudio.google.com/apikey).
 - To publish the UI: a GitHub repository and a [Streamlit Community Cloud](https://share.streamlit.io/) account.
 
 ## Install
@@ -45,21 +45,18 @@ This local workflow uses Ollama and your own documents; it is separate from the 
 
 ## Run the AZ-104 Streamlit app locally
 
-The hosted app downloads selected Microsoft Learn pages when it starts and builds an AZ-104 retrieval index. Set the API key in the current PowerShell session (replace the placeholder; do not commit a real key):
+The hosted app downloads selected Microsoft Learn pages and uses Gemini to build an AZ-104 retrieval index. The index is stored locally and reused after its first build. Set the Gemini API key in the current PowerShell session (replace the placeholder; do not commit a real key):
 
 ```powershell
-$env:OPENAI_API_KEY = "your-api-key"
+$env:GEMINI_API_KEY = "your-gemini-api-key"
 ```
 
-For an OpenAI-compatible provider other than OpenAI, also set its API base URL and the model names it supports:
+The default models are `gemini-2.5-flash` for answers and `gemini-embedding-001` for embeddings. To use different Gemini models, set:
 
 ```powershell
-$env:OPENAI_BASE_URL = "https://your-provider.example/v1"
-$env:OPENAI_CHAT_MODEL = "your-chat-model"
-$env:OPENAI_EMBEDDING_MODEL = "your-embedding-model"
+$env:GEMINI_CHAT_MODEL = "your-gemini-chat-model"
+$env:GEMINI_EMBEDDING_MODEL = "your-gemini-embedding-model"
 ```
-
-`OPENAI_BASE_URL` is optional when using OpenAI's API. The defaults are `gpt-4o-mini` for chat and `text-embedding-3-small` for embeddings.
 
 Start the interactive study app:
 
@@ -74,19 +71,15 @@ Streamlit prints a local URL to open in your browser. Use the chat box to ask qu
 1. Push this repository to GitHub.
 2. Sign in to Streamlit Community Cloud and create an app from the repository's `main` branch.
 3. Set the app file path to `app/streamlit_app.py`.
-4. Add the following values in the app's **Secrets** settings. Never commit API keys or a `.streamlit/secrets.toml` file.
+4. Add the Gemini API key in the app's **Secrets** settings. Never commit API keys or a `.streamlit/secrets.toml` file.
 
    ```toml
-   OPENAI_API_KEY = "your-api-key"
-   # Optional for OpenAI-compatible providers:
-   OPENAI_BASE_URL = "https://your-provider.example/v1"
-   OPENAI_CHAT_MODEL = "your-chat-model"
-   OPENAI_EMBEDDING_MODEL = "your-embedding-model"
+   GEMINI_API_KEY = "your-gemini-api-key"
    ```
 
 5. Deploy the app and share the public URL Streamlit provides.
 
-The public app uses the configured hosted provider for **both** chat and embeddings. Anyone with the URL can submit questions that consume your provider's usage. Set provider spending limits and monitor usage before sharing widely; deployment authentication is not configured by default.
+The public app uses Gemini for **both** chat and embeddings. Anyone with the URL can submit questions that use the project's Gemini API quota. Review Google's [Gemini API pricing](https://ai.google.dev/gemini-api/docs/pricing) and [rate limits](https://ai.google.dev/gemini-api/docs/rate-limits) before sharing widely; free-tier model availability and limits vary. Deployment authentication is not configured by default.
 
 ### API rate-limit errors during startup
 
@@ -94,7 +87,7 @@ The initial study index requires embedding API requests. If startup reports that
 
 ## Official AZ-104 content
 
-The app's curated URLs are maintained in `app/az104_sources.py`. It fetches those public Microsoft Learn pages at runtime rather than committing copies of their content. Use **Refresh Learn content** in the sidebar to rebuild the index; the app also refreshes its cached index periodically. Microsoft Learn pages can change, so check the linked source before relying on a study answer.
+The app's curated URLs are maintained in `app/az104_sources.py`. It fetches those public Microsoft Learn pages at runtime rather than committing copies of their content. Use **Refresh Learn content** in the sidebar to rebuild the index. Microsoft Learn pages can change, so check the linked source before relying on a study answer.
 
 The app currently covers the certification study guide and selected topics across identity and governance, storage, compute, networking, monitoring, backup, and Azure Resource Manager. It is an exam-preparation aid, not an official Microsoft product, exam dump, or guarantee of passing. Follow the official [AZ-104 study guide](https://learn.microsoft.com/en-us/credentials/certifications/resources/study-guides/az-104) for the current skills measured.
 
