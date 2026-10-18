@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 
 from hosted_rag import (
-    EMBEDDING_REQUEST_INTERVAL_SECONDS,
+    EMBEDDING_INPUT_INTERVAL_SECONDS,
     GeminiEmbeddings,
     _chunk_id,
     answer_az104_question,
@@ -40,7 +40,7 @@ class HostedRagTests(unittest.TestCase):
 
         with (
             patch("hosted_rag.EMBEDDING_BATCH_SIZE", 2),
-            patch("hosted_rag.EMBEDDING_REQUEST_INTERVAL_SECONDS", 0),
+            patch("hosted_rag.EMBEDDING_INPUT_INTERVAL_SECONDS", 0),
         ):
             store, source_count = build_az104_store("test-key", "test-embedding")
 
@@ -109,7 +109,7 @@ class HostedRagTests(unittest.TestCase):
             "ids": [_chunk_id(chunks[0])]
         }
 
-        with patch("hosted_rag.EMBEDDING_REQUEST_INTERVAL_SECONDS", 0):
+        with patch("hosted_rag.EMBEDDING_INPUT_INTERVAL_SECONDS", 0):
             store, _ = build_az104_store("test-key", "test-embedding")
 
         self.assertEqual(store, chroma_factory.return_value)
@@ -137,7 +137,7 @@ class HostedRagTests(unittest.TestCase):
 
         with (
             patch("hosted_rag.EMBEDDING_BATCH_SIZE", 2),
-            patch("hosted_rag.EMBEDDING_REQUEST_INTERVAL_SECONDS", 0),
+            patch("hosted_rag.EMBEDDING_INPUT_INTERVAL_SECONDS", 0),
         ):
             self.assertEqual(
                 embeddings.embed_documents(["first", "second", "third"]),
@@ -149,7 +149,7 @@ class HostedRagTests(unittest.TestCase):
         self.assertEqual(document_config.task_type, "RETRIEVAL_DOCUMENT")
         self.assertEqual(query_config.task_type, "RETRIEVAL_QUERY")
         self.assertEqual(client.models.embed_content.call_count, 3)
-        self.assertEqual(EMBEDDING_REQUEST_INTERVAL_SECONDS, 2.0)
+        self.assertEqual(EMBEDDING_INPUT_INTERVAL_SECONDS, 0.75)
 
     def test_embedding_requests_are_spaced_apart(self) -> None:
         client = Mock()
@@ -160,7 +160,7 @@ class HostedRagTests(unittest.TestCase):
         embeddings = GeminiEmbeddings(client, "test-embedding")
 
         with (
-            patch("hosted_rag.EMBEDDING_REQUEST_INTERVAL_SECONDS", 1.0),
+            patch("hosted_rag.EMBEDDING_INPUT_INTERVAL_SECONDS", 1.0),
             patch("hosted_rag._LAST_EMBEDDING_REQUEST", -10.0),
             patch("hosted_rag.time.monotonic", side_effect=[0.0, 0.0, 0.2, 1.2]),
             patch("hosted_rag.time.sleep") as sleep,
@@ -169,6 +169,27 @@ class HostedRagTests(unittest.TestCase):
             embeddings.embed_query("second")
 
         sleep.assert_called_once_with(0.8)
+
+    def test_embedding_batches_are_paced_by_number_of_inputs(self) -> None:
+        client = Mock()
+        client.models.embed_content.return_value = SimpleNamespace(
+            embeddings=[
+                SimpleNamespace(values=[1.0]),
+                SimpleNamespace(values=[2.0]),
+            ]
+        )
+        embeddings = GeminiEmbeddings(client, "test-embedding")
+
+        with (
+            patch("hosted_rag.EMBEDDING_BATCH_SIZE", 2),
+            patch("hosted_rag.EMBEDDING_INPUT_INTERVAL_SECONDS", 1.0),
+            patch("hosted_rag._LAST_EMBEDDING_REQUEST", -10.0),
+            patch("hosted_rag.time.monotonic", side_effect=[0.0, 0.0, 0.0, 0.0]),
+            patch("hosted_rag.time.sleep") as sleep,
+        ):
+            embeddings.embed_documents(["first", "second", "third", "fourth"])
+
+        sleep.assert_called_once_with(2.0)
 
     def test_chunk_id_is_stable_and_varies_with_content(self) -> None:
         first = Mock(page_content="same content", metadata={"url": "source", "chunk": 1})

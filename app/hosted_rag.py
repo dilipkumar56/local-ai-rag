@@ -22,7 +22,7 @@ from settings import PROJECT_ROOT
 AZ104_CHROMA_DIR = PROJECT_ROOT / "data" / "chroma_az104"
 AZ104_COLLECTION = "microsoft_learn_az104_gemini"
 EMBEDDING_BATCH_SIZE = 32
-EMBEDDING_REQUEST_INTERVAL_SECONDS = 2.0
+EMBEDDING_INPUT_INTERVAL_SECONDS = 0.75
 DEFAULT_CHAT_MODEL = "gemini-2.5-flash"
 DEFAULT_EMBEDDING_MODEL = "gemini-embedding-001"
 _EMBEDDING_RATE_LOCK = threading.Lock()
@@ -65,7 +65,9 @@ class GeminiEmbeddings(Embeddings):
         global _LAST_EMBEDDING_REQUEST
         with _EMBEDDING_RATE_LOCK:
             elapsed = time.monotonic() - _LAST_EMBEDDING_REQUEST
-            delay = EMBEDDING_REQUEST_INTERVAL_SECONDS - elapsed
+            input_count = len(contents) if isinstance(contents, list) else 1
+            minimum_interval = EMBEDDING_INPUT_INTERVAL_SECONDS * input_count
+            delay = minimum_interval - elapsed
             if delay > 0:
                 time.sleep(delay)
             try:
@@ -176,8 +178,9 @@ def gemini_api_help(error: APIError) -> str:
     if "429" in message or "resource_exhausted" in message or "quota" in message:
         return (
             "Gemini's API quota or rate limit was reached while embedding Learn documents. "
-            "The index is paced to about 30 requests per minute and resumes completed chunks when "
-            "storage is retained. Wait about a minute before retrying; avoid repeated restarts. "
+            "Embedding inputs are paced below the 100-per-minute free-tier quota, and completed "
+            "chunks resume when storage is retained. Wait about a minute before retrying; avoid "
+            "repeated restarts. "
             "Check the Gemini Embedding model's active quota in Google AI Studio."
         )
     return (

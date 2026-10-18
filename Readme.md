@@ -83,7 +83,13 @@ The public app uses Gemini for **both** chat and embeddings. Anyone with the URL
 
 ### API rate-limit errors during startup
 
-The initial study index sends about 31 Gemini embedding requests for the current source corpus, paced at no more than about 30 requests per minute. Initial indexing can take around a minute. Completed chunks are saved with stable IDs so indexing resumes after an interrupted run when Streamlit's local app storage is retained. If startup reports a temporary rate limit, wait about a minute before retrying; avoid repeatedly rebooting the app. Check the Gemini embedding model's quota and **Manage app** logs if the problem continues. Free-tier limits and model availability vary.
+The initial study index contains about 982 text chunks. Gemini embedding calls are paced by the
+number of texts in each batch, at roughly 80 chunks per minute, so a full first index can take
+around 13 minutes. Completed chunks are saved with stable IDs so indexing can resume after an
+interrupted run when Streamlit's local app storage is retained. Avoid repeatedly rebooting the app
+or selecting **Refresh Learn content** while indexing. If startup reports a rate limit, check the
+Gemini embedding model's active quota in AI Studio and the **Manage app** logs; Gemini quotas are
+shared by all API keys in the same Google Cloud project.
 
 ## Official AZ-104 content
 
