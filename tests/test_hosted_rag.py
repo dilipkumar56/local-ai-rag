@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 
 from hosted_rag import (
+    DEFAULT_CHAT_MODEL,
     _load_source_chunks,
     answer_az104_question,
     clear_learn_source_cache,
@@ -18,6 +19,9 @@ from hosted_rag import (
 class HostedRagTests(unittest.TestCase):
     def tearDown(self) -> None:
         clear_learn_source_cache()
+
+    def test_default_chat_model_is_current_available_model(self) -> None:
+        self.assertEqual(DEFAULT_CHAT_MODEL, "gemini-3.8-flash")
 
     def test_ranker_selects_sources_for_acronyms_and_comparison_topics(self) -> None:
         urls = rank_source_urls("How does Azure RBAC differ from Azure Policy?", limit=5)

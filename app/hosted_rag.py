@@ -20,7 +20,7 @@ from az104_sources import (
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CHAT_MODEL = "gemini-2.5-flash"
+DEFAULT_CHAT_MODEL = "gemini-3.8-flash"
 
 
 class LearnSourceError(RuntimeError):

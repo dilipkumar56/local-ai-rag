@@ -51,7 +51,7 @@ The app chooses relevant pages from its curated Microsoft Learn source list when
 $env:GEMINI_API_KEY = "your-gemini-api-key"
 ```
 
-The default chat model is `gemini-2.5-flash`. To use a different Gemini chat model, set:
+The default chat model is `gemini-3.8-flash`. To use a different Gemini chat model, set:
 
 ```powershell
 $env:GEMINI_CHAT_MODEL = "your-gemini-chat-model"
