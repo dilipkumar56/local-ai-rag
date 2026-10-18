@@ -7,7 +7,9 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 
 from hosted_rag import (
+    EMBEDDING_REQUEST_INTERVAL_SECONDS,
     GeminiEmbeddings,
+    _chunk_id,
     answer_az104_question,
     build_az104_store,
     gemini_api_help,
@@ -15,7 +17,6 @@ from hosted_rag import (
 
 
 class HostedRagTests(unittest.TestCase):
-    @patch("hosted_rag.Chroma.from_documents")
     @patch("hosted_rag.Chroma")
     @patch("hosted_rag.genai.Client")
     @patch("hosted_rag.split_official_sources")
@@ -26,33 +27,32 @@ class HostedRagTests(unittest.TestCase):
         split_sources: Mock,
         client_factory: Mock,
         chroma_factory: Mock,
-        from_documents: Mock,
     ) -> None:
         load_sources.return_value = [Mock()]
-        split_sources.return_value = [Mock() for _ in range(5)]
+        split_sources.return_value = [
+            Mock(page_content=f"chunk-{index}", metadata={"url": "url", "chunk": index})
+            for index in range(5)
+        ]
         chroma_factory.return_value._collection.count.return_value = 0
         chroma_factory.return_value._collection.metadata = None
-        from_documents.return_value = Mock()
+        chroma_factory.return_value._collection.get.return_value = {"ids": []}
+        chroma_factory.return_value.add_documents.return_value = None
 
-        with patch("hosted_rag.EMBEDDING_BATCH_SIZE", 2):
+        with (
+            patch("hosted_rag.EMBEDDING_BATCH_SIZE", 2),
+            patch("hosted_rag.EMBEDDING_REQUEST_INTERVAL_SECONDS", 0),
+        ):
             store, source_count = build_az104_store("test-key", "test-embedding")
 
         self.assertEqual(source_count, 1)
-        self.assertEqual(store, from_documents.return_value)
-        self.assertEqual(from_documents.call_count, 3)
+        self.assertEqual(store, chroma_factory.return_value)
+        self.assertEqual(store.add_documents.call_count, 3)
         self.assertEqual(
-            [len(call.kwargs["documents"]) for call in from_documents.call_args_list],
+            [len(call.kwargs["documents"]) for call in store.add_documents.call_args_list],
             [2, 2, 1],
         )
-        self.assertEqual(
-            from_documents.call_args.kwargs["collection_metadata"],
-            {
-                "embedding_provider": "gemini",
-                "embedding_model": "test-embedding",
-                "index_complete": False,
-            },
-        )
-        from_documents.return_value._collection.modify.assert_called_once_with(
+        self.assertTrue(all(call.kwargs["ids"] for call in store.add_documents.call_args_list))
+        store._collection.modify.assert_called_with(
             metadata={
                 "embedding_provider": "gemini",
                 "embedding_model": "test-embedding",
@@ -62,7 +62,6 @@ class HostedRagTests(unittest.TestCase):
         chroma_factory.return_value.delete_collection.assert_called_once()
         client_factory.assert_called_once_with(api_key="test-key")
 
-    @patch("hosted_rag.Chroma.from_documents")
     @patch("hosted_rag.Chroma")
     @patch("hosted_rag.genai.Client")
     @patch("hosted_rag.load_official_sources")
@@ -71,9 +70,7 @@ class HostedRagTests(unittest.TestCase):
         load_sources: Mock,
         client_factory: Mock,
         chroma_factory: Mock,
-        from_documents: Mock,
     ) -> None:
-        chroma_factory.return_value._collection.count.return_value = 12
         chroma_factory.return_value._collection.metadata = {
             "embedding_provider": "gemini",
             "embedding_model": "test-embedding",
@@ -85,7 +82,44 @@ class HostedRagTests(unittest.TestCase):
         self.assertEqual(store, chroma_factory.return_value)
         self.assertEqual(source_count, 45)
         load_sources.assert_not_called()
-        from_documents.assert_not_called()
+
+    @patch("hosted_rag.Chroma")
+    @patch("hosted_rag.genai.Client")
+    @patch("hosted_rag.split_official_sources")
+    @patch("hosted_rag.load_official_sources")
+    def test_resumes_incomplete_index_without_deleting_existing_chunks(
+        self,
+        load_sources: Mock,
+        split_sources: Mock,
+        client_factory: Mock,
+        chroma_factory: Mock,
+    ) -> None:
+        chunks = [
+            Mock(page_content=f"chunk-{index}", metadata={"url": "url", "chunk": index})
+            for index in range(3)
+        ]
+        load_sources.return_value = [Mock()]
+        split_sources.return_value = chunks
+        chroma_factory.return_value._collection.metadata = {
+            "embedding_provider": "gemini",
+            "embedding_model": "test-embedding",
+            "index_complete": False,
+        }
+        chroma_factory.return_value._collection.get.return_value = {
+            "ids": [_chunk_id(chunks[0])]
+        }
+
+        with patch("hosted_rag.EMBEDDING_REQUEST_INTERVAL_SECONDS", 0):
+            store, _ = build_az104_store("test-key", "test-embedding")
+
+        self.assertEqual(store, chroma_factory.return_value)
+        store.delete_collection.assert_not_called()
+        store.add_documents.assert_called_once()
+        self.assertEqual(store.add_documents.call_args.kwargs["documents"], chunks[1:])
+        self.assertEqual(
+            store.add_documents.call_args.kwargs["ids"],
+            [_chunk_id(chunks[1]), _chunk_id(chunks[2])],
+        )
 
     def test_gemini_embedding_adapter_uses_document_and_query_tasks(self) -> None:
         client = Mock()
@@ -101,7 +135,10 @@ class HostedRagTests(unittest.TestCase):
         ]
         embeddings = GeminiEmbeddings(client, "test-embedding")
 
-        with patch("hosted_rag.EMBEDDING_BATCH_SIZE", 2):
+        with (
+            patch("hosted_rag.EMBEDDING_BATCH_SIZE", 2),
+            patch("hosted_rag.EMBEDDING_REQUEST_INTERVAL_SECONDS", 0),
+        ):
             self.assertEqual(
                 embeddings.embed_documents(["first", "second", "third"]),
                 [[1.0, 2.0], [3.0, 4.0], [7.0, 8.0]],
@@ -112,6 +149,34 @@ class HostedRagTests(unittest.TestCase):
         self.assertEqual(document_config.task_type, "RETRIEVAL_DOCUMENT")
         self.assertEqual(query_config.task_type, "RETRIEVAL_QUERY")
         self.assertEqual(client.models.embed_content.call_count, 3)
+        self.assertEqual(EMBEDDING_REQUEST_INTERVAL_SECONDS, 2.0)
+
+    def test_embedding_requests_are_spaced_apart(self) -> None:
+        client = Mock()
+        client.models.embed_content.side_effect = [
+            SimpleNamespace(embeddings=[SimpleNamespace(values=[1.0])]),
+            SimpleNamespace(embeddings=[SimpleNamespace(values=[2.0])]),
+        ]
+        embeddings = GeminiEmbeddings(client, "test-embedding")
+
+        with (
+            patch("hosted_rag.EMBEDDING_REQUEST_INTERVAL_SECONDS", 1.0),
+            patch("hosted_rag._LAST_EMBEDDING_REQUEST", -10.0),
+            patch("hosted_rag.time.monotonic", side_effect=[0.0, 0.0, 0.2, 1.2]),
+            patch("hosted_rag.time.sleep") as sleep,
+        ):
+            embeddings.embed_query("first")
+            embeddings.embed_query("second")
+
+        sleep.assert_called_once_with(0.8)
+
+    def test_chunk_id_is_stable_and_varies_with_content(self) -> None:
+        first = Mock(page_content="same content", metadata={"url": "source", "chunk": 1})
+        equivalent = Mock(page_content="same content", metadata={"url": "source", "chunk": 1})
+        changed = Mock(page_content="changed content", metadata={"url": "source", "chunk": 1})
+
+        self.assertEqual(_chunk_id(first), _chunk_id(equivalent))
+        self.assertNotEqual(_chunk_id(first), _chunk_id(changed))
 
     @patch("hosted_rag.genai.Client")
     def test_follow_up_uses_gemini_and_preserves_citations(self, client_factory: Mock) -> None:

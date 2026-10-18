@@ -83,7 +83,7 @@ The public app uses Gemini for **both** chat and embeddings. Anyone with the URL
 
 ### API rate-limit errors during startup
 
-The initial study index requires embedding API requests. If startup reports that the provider has no available quota, enable API billing or increase the API project's spending limit; a ChatGPT subscription does not include API credits. If the provider reports a temporary rate limit, the app retries requests and indexes smaller batches, so wait briefly and restart the app. Check **Manage app** logs for the provider's precise error code.
+The initial study index sends about 31 Gemini embedding requests for the current source corpus, paced at no more than about 30 requests per minute. Initial indexing can take around a minute. Completed chunks are saved with stable IDs so indexing resumes after an interrupted run when Streamlit's local app storage is retained. If startup reports a temporary rate limit, wait about a minute before retrying; avoid repeatedly rebooting the app. Check the Gemini embedding model's quota and **Manage app** logs if the problem continues. Free-tier limits and model availability vary.
 
 ## Official AZ-104 content
 

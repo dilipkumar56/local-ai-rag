@@ -1,5 +1,9 @@
 """RAG operations for the publicly hosted AZ-104 study assistant."""
 
+import hashlib
+import threading
+import time
+
 from google import genai
 from google.genai.errors import APIError
 from google.genai import types
@@ -18,8 +22,11 @@ from settings import PROJECT_ROOT
 AZ104_CHROMA_DIR = PROJECT_ROOT / "data" / "chroma_az104"
 AZ104_COLLECTION = "microsoft_learn_az104_gemini"
 EMBEDDING_BATCH_SIZE = 32
+EMBEDDING_REQUEST_INTERVAL_SECONDS = 2.0
 DEFAULT_CHAT_MODEL = "gemini-2.5-flash"
 DEFAULT_EMBEDDING_MODEL = "gemini-embedding-001"
+_EMBEDDING_RATE_LOCK = threading.Lock()
+_LAST_EMBEDDING_REQUEST = 0.0
 
 AZ104_PROMPT = ChatPromptTemplate.from_messages(
     [
@@ -54,13 +61,28 @@ class GeminiEmbeddings(Embeddings):
         self.client = client
         self.model = model
 
+    def _embed_content(self, contents: str | list[str], task_type: str):
+        global _LAST_EMBEDDING_REQUEST
+        with _EMBEDDING_RATE_LOCK:
+            elapsed = time.monotonic() - _LAST_EMBEDDING_REQUEST
+            delay = EMBEDDING_REQUEST_INTERVAL_SECONDS - elapsed
+            if delay > 0:
+                time.sleep(delay)
+            try:
+                return self.client.models.embed_content(
+                    model=self.model,
+                    contents=contents,
+                    config=types.EmbedContentConfig(task_type=task_type),
+                )
+            finally:
+                _LAST_EMBEDDING_REQUEST = time.monotonic()
+
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         vectors: list[list[float]] = []
         for start in range(0, len(texts), EMBEDDING_BATCH_SIZE):
-            response = self.client.models.embed_content(
-                model=self.model,
-                contents=texts[start : start + EMBEDDING_BATCH_SIZE],
-                config=types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT"),
+            response = self._embed_content(
+                texts[start : start + EMBEDDING_BATCH_SIZE],
+                "RETRIEVAL_DOCUMENT",
             )
             if not response.embeddings or any(
                 not embedding.values for embedding in response.embeddings
@@ -74,11 +96,7 @@ class GeminiEmbeddings(Embeddings):
         return vectors
 
     def embed_query(self, text: str) -> list[float]:
-        response = self.client.models.embed_content(
-            model=self.model,
-            contents=text,
-            config=types.EmbedContentConfig(task_type="RETRIEVAL_QUERY"),
-        )
+        response = self._embed_content(text, "RETRIEVAL_QUERY")
         if not response.embeddings or not response.embeddings[0].values:
             raise RuntimeError("Gemini returned no embedding for the search query.")
         return response.embeddings[0].values
@@ -92,41 +110,64 @@ def build_az104_store(
     """Reuse the persisted index or create it from current official Learn pages."""
     client = genai.Client(api_key=api_key)
     embeddings = GeminiEmbeddings(client, embedding_model)
+    index_metadata = {
+        "embedding_provider": "gemini",
+        "embedding_model": embedding_model,
+    }
+    expected_metadata = {**index_metadata, "index_complete": True}
+
+    AZ104_CHROMA_DIR.mkdir(parents=True, exist_ok=True)
     existing_store = Chroma(
         collection_name=AZ104_COLLECTION,
         persist_directory=str(AZ104_CHROMA_DIR),
         embedding_function=embeddings,
     )
-    expected_metadata = {
-        "embedding_provider": "gemini",
-        "embedding_model": embedding_model,
-        "index_complete": True,
-    }
-    if (
-        not refresh
-        and existing_store._collection.count() > 0
-        and existing_store._collection.metadata == expected_metadata
-    ):
-        return existing_store, len(MICROSOFT_LEARN_SOURCES)
+    current_metadata = existing_store._collection.metadata or {}
+    if refresh or any(current_metadata.get(key) != value for key, value in index_metadata.items()):
+        existing_store.delete_collection()
+        store = Chroma(
+            collection_name=AZ104_COLLECTION,
+            persist_directory=str(AZ104_CHROMA_DIR),
+            embedding_function=embeddings,
+            collection_metadata={**index_metadata, "index_complete": False},
+        )
+    else:
+        store = existing_store
+
+    if not refresh and store._collection.metadata == expected_metadata:
+        return store, len(MICROSOFT_LEARN_SOURCES)
 
     documents = load_official_sources()
     chunks = split_official_sources(documents)
     if not chunks:
         raise RuntimeError("No AZ-104 reference chunks were generated.")
-    existing_store.delete_collection()
-    store: Chroma | None = None
-    for start in range(0, len(chunks), EMBEDDING_BATCH_SIZE):
-        store = Chroma.from_documents(
-            documents=chunks[start : start + EMBEDDING_BATCH_SIZE],
-            embedding=embeddings,
-            collection_name=AZ104_COLLECTION,
-            persist_directory=str(AZ104_CHROMA_DIR),
-            collection_metadata={**expected_metadata, "index_complete": False},
+    stored_ids = set(store._collection.get(include=[])["ids"])
+    pending_chunks = [
+        (chunk, _chunk_id(chunk))
+        for chunk in chunks
+    ]
+    pending_chunks = [(chunk, chunk_id) for chunk, chunk_id in pending_chunks if chunk_id not in stored_ids]
+    if store._collection.metadata != {**index_metadata, "index_complete": False}:
+        store._collection.modify(metadata={**index_metadata, "index_complete": False})
+
+    for start in range(0, len(pending_chunks), EMBEDDING_BATCH_SIZE):
+        batch = pending_chunks[start : start + EMBEDDING_BATCH_SIZE]
+        store.add_documents(
+            documents=[chunk for chunk, _ in batch],
+            ids=[chunk_id for _, chunk_id in batch],
         )
-    if store is None:
-        raise RuntimeError("No AZ-104 reference chunks were generated.")
     store._collection.modify(metadata=expected_metadata)
     return store, len(documents)
+
+
+def _chunk_id(document: Document) -> str:
+    """Generate a stable Chroma ID so interrupted indexing can resume safely."""
+    identity = (
+        f"{document.metadata.get('url', '')}\n"
+        f"{document.metadata.get('chunk', '')}\n"
+        f"{document.page_content}"
+    )
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()
 
 
 def gemini_api_help(error: APIError) -> str:
@@ -134,10 +175,10 @@ def gemini_api_help(error: APIError) -> str:
     message = str(error).lower()
     if "429" in message or "resource_exhausted" in message or "quota" in message:
         return (
-            "Gemini's API quota or rate limit was reached. Check your active limits in Google AI "
-            "Studio, wait before retrying, or reduce request volume. Review the Gemini API "
-            "pricing and rate-limit pages; API free-tier availability and limits vary by model "
-            "and project."
+            "Gemini's API quota or rate limit was reached while embedding Learn documents. "
+            "The index is paced to about 30 requests per minute and resumes completed chunks when "
+            "storage is retained. Wait about a minute before retrying; avoid repeated restarts. "
+            "Check the Gemini Embedding model's active quota in Google AI Studio."
         )
     return (
         "Gemini could not complete this request. Check that GEMINI_API_KEY is valid, the selected "
