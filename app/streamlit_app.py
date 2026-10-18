@@ -1,7 +1,7 @@
 """Interactive, publicly deployable AZ-104 study assistant."""
 
-import os
 import logging
+import os
 
 import streamlit as st
 from google.genai.errors import APIError
@@ -32,7 +32,9 @@ def config_value(name: str, default: str = "") -> str:
 
 st.set_page_config(page_title="AZ-104 Study Assistant", page_icon="☁️", layout="centered")
 st.title("AZ-104 Study Assistant")
-st.caption("Ask Azure Administrator questions grounded in official Microsoft Learn content, powered by Gemini.")
+st.caption(
+    "Ask Azure Administrator questions grounded in official Microsoft Learn content, powered by Gemini."
+)
 st.info(
     "This is a study aid, not an exam dump or a guarantee of passing. "
     "Check the linked Microsoft Learn sources for the latest details."
@@ -45,7 +47,9 @@ embedding_model = config_value("GEMINI_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL
 with st.sidebar:
     st.header("Study tools")
     st.write("Knowledge base: selected official Microsoft Learn pages for AZ-104.")
-    st.caption("The Learn index is reused after its first build. Refreshing makes embedding API requests.")
+    st.caption(
+        "The Learn index is reused after its first build. Refreshing makes embedding API requests."
+    )
     if st.button("Refresh Learn content", use_container_width=True):
         st.cache_resource.clear()
         st.session_state.refresh_index = True
@@ -71,7 +75,11 @@ if not api_key:
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-@st.cache_resource(ttl=21_600, show_spinner="Loading Microsoft Learn pages and building the study index...")
+
+@st.cache_resource(
+    ttl=21_600,
+    show_spinner="Loading Microsoft Learn pages and building the study index...",
+)
 def get_store(
     key: str, embedding: str, refresh: bool
 ) -> tuple[Chroma, int]:

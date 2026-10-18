@@ -16,7 +16,7 @@ from az104_sources import (
 from settings import PROJECT_ROOT
 
 AZ104_CHROMA_DIR = PROJECT_ROOT / "data" / "chroma_az104"
-AZ104_COLLECTION = "microsoft_learn_az104"
+AZ104_COLLECTION = "microsoft_learn_az104_gemini"
 EMBEDDING_BATCH_SIZE = 32
 DEFAULT_CHAT_MODEL = "gemini-2.5-flash"
 DEFAULT_EMBEDDING_MODEL = "gemini-embedding-001"
@@ -97,11 +97,22 @@ def build_az104_store(
         persist_directory=str(AZ104_CHROMA_DIR),
         embedding_function=embeddings,
     )
-    if not refresh and existing_store._collection.count() > 0:
+    expected_metadata = {
+        "embedding_provider": "gemini",
+        "embedding_model": embedding_model,
+        "index_complete": True,
+    }
+    if (
+        not refresh
+        and existing_store._collection.count() > 0
+        and existing_store._collection.metadata == expected_metadata
+    ):
         return existing_store, len(MICROSOFT_LEARN_SOURCES)
 
     documents = load_official_sources()
     chunks = split_official_sources(documents)
+    if not chunks:
+        raise RuntimeError("No AZ-104 reference chunks were generated.")
     existing_store.delete_collection()
     store: Chroma | None = None
     for start in range(0, len(chunks), EMBEDDING_BATCH_SIZE):
@@ -110,9 +121,11 @@ def build_az104_store(
             embedding=embeddings,
             collection_name=AZ104_COLLECTION,
             persist_directory=str(AZ104_CHROMA_DIR),
+            collection_metadata={**expected_metadata, "index_complete": False},
         )
     if store is None:
         raise RuntimeError("No AZ-104 reference chunks were generated.")
+    store._collection.modify(metadata=expected_metadata)
     return store, len(documents)
 
 

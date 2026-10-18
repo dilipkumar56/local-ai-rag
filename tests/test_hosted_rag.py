@@ -7,7 +7,6 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 
 from hosted_rag import (
-    EMBEDDING_BATCH_SIZE,
     GeminiEmbeddings,
     answer_az104_question,
     build_az104_store,
@@ -32,6 +31,7 @@ class HostedRagTests(unittest.TestCase):
         load_sources.return_value = [Mock()]
         split_sources.return_value = [Mock() for _ in range(5)]
         chroma_factory.return_value._collection.count.return_value = 0
+        chroma_factory.return_value._collection.metadata = None
         from_documents.return_value = Mock()
 
         with patch("hosted_rag.EMBEDDING_BATCH_SIZE", 2):
@@ -43,6 +43,21 @@ class HostedRagTests(unittest.TestCase):
         self.assertEqual(
             [len(call.kwargs["documents"]) for call in from_documents.call_args_list],
             [2, 2, 1],
+        )
+        self.assertEqual(
+            from_documents.call_args.kwargs["collection_metadata"],
+            {
+                "embedding_provider": "gemini",
+                "embedding_model": "test-embedding",
+                "index_complete": False,
+            },
+        )
+        from_documents.return_value._collection.modify.assert_called_once_with(
+            metadata={
+                "embedding_provider": "gemini",
+                "embedding_model": "test-embedding",
+                "index_complete": True,
+            }
         )
         chroma_factory.return_value.delete_collection.assert_called_once()
         client_factory.assert_called_once_with(api_key="test-key")
@@ -59,6 +74,11 @@ class HostedRagTests(unittest.TestCase):
         from_documents: Mock,
     ) -> None:
         chroma_factory.return_value._collection.count.return_value = 12
+        chroma_factory.return_value._collection.metadata = {
+            "embedding_provider": "gemini",
+            "embedding_model": "test-embedding",
+            "index_complete": True,
+        }
 
         store, source_count = build_az104_store("test-key", "test-embedding")
 
@@ -76,16 +96,22 @@ class HostedRagTests(unittest.TestCase):
                     SimpleNamespace(values=[3.0, 4.0]),
                 ]
             ),
+            SimpleNamespace(embeddings=[SimpleNamespace(values=[7.0, 8.0])]),
             SimpleNamespace(embeddings=[SimpleNamespace(values=[5.0, 6.0])]),
         ]
         embeddings = GeminiEmbeddings(client, "test-embedding")
 
-        self.assertEqual(embeddings.embed_documents(["first", "second"]), [[1.0, 2.0], [3.0, 4.0]])
+        with patch("hosted_rag.EMBEDDING_BATCH_SIZE", 2):
+            self.assertEqual(
+                embeddings.embed_documents(["first", "second", "third"]),
+                [[1.0, 2.0], [3.0, 4.0], [7.0, 8.0]],
+            )
         self.assertEqual(embeddings.embed_query("question"), [5.0, 6.0])
         document_config = client.models.embed_content.call_args_list[0].kwargs["config"]
-        query_config = client.models.embed_content.call_args_list[1].kwargs["config"]
+        query_config = client.models.embed_content.call_args_list[2].kwargs["config"]
         self.assertEqual(document_config.task_type, "RETRIEVAL_DOCUMENT")
         self.assertEqual(query_config.task_type, "RETRIEVAL_QUERY")
+        self.assertEqual(client.models.embed_content.call_count, 3)
 
     @patch("hosted_rag.genai.Client")
     def test_follow_up_uses_gemini_and_preserves_citations(self, client_factory: Mock) -> None:
