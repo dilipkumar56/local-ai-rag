@@ -21,6 +21,12 @@ from az104_sources import (
 logger = logging.getLogger(__name__)
 
 DEFAULT_CHAT_MODEL = "gemini-2.5-flash"
+
+
+class LearnSourceError(RuntimeError):
+    """Raised when selected Microsoft Learn content cannot be retrieved."""
+
+
 STOP_WORDS = {
     "a",
     "about",
@@ -165,10 +171,10 @@ def retrieve_relevant_documents(
         )
     if not candidate_chunks:
         if failures:
-            raise RuntimeError(
+            raise LearnSourceError(
                 "Could not load any selected Microsoft Learn pages.\n" + "\n".join(failures)
             )
-        raise RuntimeError("No chunks were found in the selected Microsoft Learn pages.")
+        raise LearnSourceError("No chunks were found in the selected Microsoft Learn pages.")
 
     query_terms = _query_terms(question)
     if not query_terms:
@@ -243,14 +249,15 @@ def answer_az104_question(
     messages = prompt.to_messages()
     system_instruction = str(messages[0].content)
     user_content = "\n\n".join(str(message.content) for message in messages[1:])
-    response = genai.Client(api_key=api_key).models.generate_content(
-        model=chat_model,
-        contents=user_content,
-        config=types.GenerateContentConfig(
-            system_instruction=system_instruction,
-            temperature=0,
-        ),
-    )
+    with genai.Client(api_key=api_key) as client:
+        response = client.models.generate_content(
+            model=chat_model,
+            contents=user_content,
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                temperature=0,
+            ),
+        )
     if not response.text:
         raise RuntimeError("Gemini returned an empty response.")
     return response.text, documents

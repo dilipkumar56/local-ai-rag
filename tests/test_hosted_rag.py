@@ -108,7 +108,7 @@ class HostedRagTests(unittest.TestCase):
             page_content="RBAC assigns roles to control access.",
         )
         retrieve.return_value = [document]
-        client = client_factory.return_value
+        client = client_factory.return_value.__enter__.return_value
         client.models.generate_content.return_value.text = "RBAC assigns permissions."
 
         answer, sources = answer_az104_question(
@@ -122,6 +122,7 @@ class HostedRagTests(unittest.TestCase):
         self.assertEqual(sources, [document])
         retrieve.assert_called_once_with("How does Azure RBAC control access?\nWhy?", k=5)
         client_factory.assert_called_once_with(api_key="test-key")
+        client_factory.return_value.__exit__.assert_called_once_with(None, None, None)
         call = client.models.generate_content.call_args
         self.assertEqual(call.kwargs["model"], "gemini-test-model")
         self.assertIn("Microsoft Learn", call.kwargs["contents"])

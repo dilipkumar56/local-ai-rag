@@ -9,6 +9,7 @@ from streamlit.errors import StreamlitSecretNotFoundError
 
 from hosted_rag import (
     DEFAULT_CHAT_MODEL,
+    LearnSourceError,
     answer_az104_question,
     clear_learn_source_cache,
     gemini_api_help,
@@ -97,9 +98,13 @@ if question:
                 logger.exception("Gemini API failed while answering an AZ-104 question.")
                 answer = gemini_api_help(error)
                 documents = []
-            except RuntimeError as error:
+            except LearnSourceError as error:
                 logger.exception("Could not retrieve Microsoft Learn content.")
                 answer = f"Could not retrieve the reference content: {error}"
+                documents = []
+            except RuntimeError as error:
+                logger.exception("Could not complete the Gemini answer request.")
+                answer = f"Could not complete the answer request: {error}"
                 documents = []
         st.markdown(answer)
         citations = []
