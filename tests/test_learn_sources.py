@@ -83,7 +83,80 @@ class OfficialSourceTests(unittest.TestCase):
                 ),
             ),
         )
-        self.assertEqual(get.call_args.kwargs["params"]["search"], "Azure How does workload identity work?")
+        self.assertEqual(
+            get.call_args.kwargs["params"]["search"],
+            "Azure How does workload identity work?",
+        )
+
+    @patch("learn_sources.requests.get")
+    def test_ranks_cosmos_db_overview_above_hub_and_unrelated_results(
+        self,
+        get: Mock,
+    ) -> None:
+        get.return_value = Mock(
+            json=Mock(
+                return_value={
+                    "results": [
+                        {
+                            "title": "Azure Cosmos DB documentation - Azure Cosmos DB",
+                            "url": "https://learn.microsoft.com/en-us/azure/cosmos-db/",
+                            "description": (
+                                "Overview Introduction to Azure Cosmos DB Architecture "
+                                "Vector Database in Azure Cosmos DB"
+                            ),
+                            "category": "Documentation",
+                        },
+                        {
+                            "title": "Entity Framework documentation hub",
+                            "url": "https://learn.microsoft.com/en-us/ef/",
+                            "description": "A modern object relational mapper for .NET.",
+                            "category": "Documentation",
+                        },
+                        {
+                            "title": "Managed identities for Azure resources",
+                            "url": (
+                                "https://learn.microsoft.com/en-us/entra/identity/"
+                                "managed-identities-azure-resources/overview"
+                            ),
+                            "description": (
+                                "Use managed identities to securely access Azure Cosmos DB."
+                            ),
+                            "category": "Documentation",
+                        },
+                        {
+                            "title": "Introduction/Overview - Azure Cosmos DB for MongoDB",
+                            "url": "https://learn.microsoft.com/en-us/azure/cosmos-db/mongodb/overview",
+                            "description": (
+                                "Azure Cosmos DB for MongoDB is a fully managed NoSQL database "
+                                "with MongoDB wire protocol compatibility."
+                            ),
+                            "category": "Documentation",
+                        },
+                        {
+                            "title": "Unified AI Database - Azure Cosmos DB",
+                            "url": "https://learn.microsoft.com/en-us/azure/cosmos-db/overview",
+                            "description": (
+                                "Azure Cosmos DB is a NoSQL and vector database with "
+                                "reliability and flexible operational data."
+                            ),
+                            "category": "Documentation",
+                        },
+                    ]
+                }
+            )
+        )
+        get.return_value.raise_for_status.return_value = None
+
+        results = search_official_sources("Give me an introduction to Azure Cosmos DB")
+
+        self.assertEqual(
+            results[0][1],
+            "https://learn.microsoft.com/en-us/azure/cosmos-db/overview",
+        )
+        self.assertFalse(any(url.endswith("/ef/") for _, url, _ in results))
+        self.assertFalse(any(url.endswith("/cosmos-db/") for _, url, _ in results))
+        self.assertFalse(any("/managed-identities-" in url for _, url, _ in results))
+        self.assertFalse(any("/mongodb/" in url for _, url, _ in results[:2]))
 
     def test_split_preserves_source_link_and_adds_chunk_numbers(self) -> None:
         from langchain_core.documents import Document

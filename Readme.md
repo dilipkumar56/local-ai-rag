@@ -82,12 +82,14 @@ The public app uses Microsoft Learn search and Gemini for **chat only**. It does
 
 ### Source retrieval and caching
 
-For each question the app calls the public Microsoft Learn search API, selects official
-documentation results, fetches those pages, and ranks their text locally. Search results and pages
-are cached in the running app process. **Refresh Learn content** clears those caches. Retrieval
-does not use Gemini embeddings, so it avoids Gemini's embedding quota; Gemini chat still uses
-tokens to generate the answer. Answers include links to the documentation pages used. Check those
-sources for the latest details.
+For each question the app calls the public Microsoft Learn search API, reranks official
+documentation by query relevance, deprioritizes navigation-only documentation hubs, fetches the
+best-matching pages, and ranks their text chunks locally. Search results and pages are cached in the
+running app process. **Refresh Learn content** clears those caches. Retrieval does not use Gemini
+embeddings, so it avoids Gemini's embedding quota; Gemini chat still uses tokens to generate the
+answer. The RAG prompt asks Gemini to synthesize an explanation from substantive excerpts and not
+mistake table-of-contents headings for evidence. Answers include links to the documentation pages
+used. Check those sources for the latest details.
 
 ## Microsoft Learn sources
 

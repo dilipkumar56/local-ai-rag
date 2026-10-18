@@ -48,6 +48,34 @@ class HostedRagTests(unittest.TestCase):
         search_sources.assert_called_once_with("How does RBAC control access?", 5)
         load_chunks.assert_called_once_with("selected-url")
 
+    @patch("hosted_rag._load_source_chunks")
+    @patch("hosted_rag.search_official_sources")
+    def test_introduction_retrieval_prefers_early_overview_chunks(
+        self,
+        search_sources: Mock,
+        load_chunks: Mock,
+    ) -> None:
+        from langchain_core.documents import Document
+
+        url = "https://learn.microsoft.com/en-us/azure/cosmos-db/overview"
+        search_sources.return_value = (("Azure Cosmos DB overview", url, "Overview"),)
+        first_chunk = Document(
+            page_content="Azure Cosmos DB is a fully managed globally distributed database.",
+            metadata={"source": "Azure Cosmos DB overview", "url": url, "chunk": 1},
+        )
+        later_chunk = Document(
+            page_content="Azure Cosmos DB emulator supports local testing.",
+            metadata={"source": "Azure Cosmos DB overview", "url": url, "chunk": 8},
+        )
+        load_chunks.return_value = (later_chunk, first_chunk)
+
+        documents = retrieve_relevant_documents(
+            "Give me an introduction to Azure Cosmos DB",
+            k=1,
+        )
+
+        self.assertEqual(documents, [first_chunk])
+
     @patch("hosted_rag.split_official_sources")
     @patch("hosted_rag.load_official_source")
     def test_selected_learn_pages_are_cached_until_refresh(
@@ -105,7 +133,10 @@ class HostedRagTests(unittest.TestCase):
         call = client.models.generate_content.call_args
         self.assertEqual(call.kwargs["model"], "gemini-test-model")
         self.assertIn("Microsoft Learn", call.kwargs["contents"])
-        self.assertIn("Azure questions", call.kwargs["config"].system_instruction)
+        self.assertIn(
+            "retrieval-augmented generation (RAG)",
+            call.kwargs["config"].system_instruction,
+        )
         client.models.embed_content.assert_not_called()
 
     def test_rate_limit_help_identifies_chat_quota(self) -> None:
