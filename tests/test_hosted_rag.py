@@ -76,6 +76,95 @@ class HostedRagTests(unittest.TestCase):
 
         self.assertEqual(documents, [first_chunk])
 
+    @patch("hosted_rag._load_source_chunks")
+    @patch("hosted_rag.search_official_sources")
+    def test_broad_workload_question_prefers_explanatory_overview_chunk(
+        self,
+        search_sources: Mock,
+        load_chunks: Mock,
+    ) -> None:
+        from langchain_core.documents import Document
+
+        url = "https://learn.microsoft.com/en-us/azure/aks/workload-identity-overview"
+        search_sources.return_value = (("AKS Workload Identity", url, "Overview"),)
+        overview_chunk = Document(
+            page_content=(
+                "Azure Kubernetes Service workloads can use Microsoft Entra Workload ID "
+                "to access Azure resources without stored credentials."
+            ),
+            metadata={"source": "AKS Workload Identity", "url": url, "chunk": 1},
+        )
+        implementation_chunk = Document(
+            page_content=(
+                "AZURE_FEDERATED_TOKEN_FILE identifies the projected token file for "
+                "a Kubernetes workload identity."
+            ),
+            metadata={"source": "AKS Workload Identity", "url": url, "chunk": 15},
+        )
+        load_chunks.return_value = (implementation_chunk, overview_chunk)
+
+        documents = retrieve_relevant_documents(
+            "How do I secure an Azure Kubernetes workload?",
+            k=1,
+        )
+
+        self.assertEqual(documents, [overview_chunk])
+
+    @patch("hosted_rag._load_source_chunks")
+    @patch("hosted_rag.search_official_sources")
+    def test_comparison_retrieval_includes_both_requested_services(
+        self,
+        search_sources: Mock,
+        load_chunks: Mock,
+    ) -> None:
+        from langchain_core.documents import Document
+
+        sql_url = (
+            "https://learn.microsoft.com/en-us/azure/azure-sql/database/"
+            "sql-database-paas-overview"
+        )
+        cosmos_url = "https://learn.microsoft.com/en-us/azure/cosmos-db/overview"
+        search_sources.return_value = (
+            ("Azure SQL Database overview", sql_url, "Managed relational database."),
+            ("Azure Cosmos DB overview", cosmos_url, "Globally distributed NoSQL database."),
+        )
+        sql_chunks = tuple(
+            Document(
+                page_content=f"Azure SQL Database relational overview section {index}.",
+                metadata={"source": "Azure SQL Database", "url": sql_url, "chunk": index},
+            )
+            for index in range(1, 5)
+        )
+        cosmos_chunks = tuple(
+            Document(
+                page_content=f"Azure Cosmos DB NoSQL overview section {index}.",
+                metadata={"source": "Azure Cosmos DB", "url": cosmos_url, "chunk": index},
+            )
+            for index in range(1, 5)
+        )
+        load_chunks.side_effect = (sql_chunks, cosmos_chunks)
+
+        documents = retrieve_relevant_documents(
+            "Compare Azure SQL Database and Cosmos DB.",
+            k=5,
+        )
+
+        urls = {document.metadata["url"] for document in documents}
+        self.assertIn(sql_url, urls)
+        self.assertIn(cosmos_url, urls)
+        self.assertEqual(len(documents), 5)
+        self.assertEqual(
+            {
+                url: min(
+                    document.metadata["chunk"]
+                    for document in documents
+                    if document.metadata["url"] == url
+                )
+                for url in (sql_url, cosmos_url)
+            },
+            {sql_url: 1, cosmos_url: 1},
+        )
+
     @patch("hosted_rag.split_official_sources")
     @patch("hosted_rag.load_official_source")
     def test_selected_learn_pages_are_cached_until_refresh(

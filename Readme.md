@@ -63,7 +63,7 @@ Start the interactive study app:
 streamlit run app\streamlit_app.py
 ```
 
-Streamlit prints a local URL to open in your browser. Ask about any Azure service or solution, and follow the Microsoft Learn source links shown with each answer. Use the sidebar to refresh search/page caches or clear the conversation.
+Streamlit prints a local URL to open in your browser. Ask about any Azure service or solution, and follow the Microsoft Learn source links shown with each answer. The sidebar keeps a selectable list of conversations for the current app session; use **New chat** to start another conversation or **Clear current chat** to clear the selected one. Suggested questions are clickable and target focused Learn searches.
 
 ## Publish a public Streamlit app
 
@@ -84,8 +84,10 @@ The public app uses Microsoft Learn search and Gemini for **chat only**. It does
 
 For each question the app calls the public Microsoft Learn search API, reranks official
 documentation by query relevance, deprioritizes navigation-only documentation hubs, fetches the
-best-matching pages, and ranks their text chunks locally. Search results and pages are cached in the
-running app process. **Refresh Learn content** clears those caches. Retrieval does not use Gemini
+best-matching pages, and ranks their text chunks locally. Focused questions for AKS workload
+security, SQL Database versus Cosmos DB, private endpoints, and application monitoring receive
+topic-specific Learn searches; comparison questions retrieve documentation for both services.
+Search results and pages are cached in the running app process. **Refresh Learn content** clears those caches. Retrieval does not use Gemini
 embeddings, so it avoids Gemini's embedding quota; Gemini chat still uses tokens to generate the
 answer. The RAG prompt asks Gemini to synthesize an explanation from substantive excerpts and not
 mistake table-of-contents headings for evidence. Answers include links to the documentation pages
