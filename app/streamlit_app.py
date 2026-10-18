@@ -4,9 +4,10 @@ import os
 
 import streamlit as st
 from langchain_chroma import Chroma
+from openai import RateLimitError
 from streamlit.errors import StreamlitSecretNotFoundError
 
-from hosted_rag import answer_az104_question, build_az104_store
+from hosted_rag import answer_az104_question, build_az104_store, rate_limit_help
 
 DEFAULT_CHAT_MODEL = "gpt-4o-mini"
 DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
@@ -72,7 +73,11 @@ def get_store(
     return build_az104_store(key, endpoint, embedding)
 
 
-store, source_count = get_store(api_key, base_url, embedding_model)
+try:
+    store, source_count = get_store(api_key, base_url, embedding_model)
+except RateLimitError as error:
+    st.error(rate_limit_help(error))
+    st.stop()
 with st.sidebar:
     st.caption(f"{source_count} official source pages indexed.")
 

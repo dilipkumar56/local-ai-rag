@@ -4,12 +4,14 @@ from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from openai import RateLimitError
 
 from az104_sources import load_official_sources, split_official_sources
 from settings import PROJECT_ROOT
 
 AZ104_CHROMA_DIR = PROJECT_ROOT / "data" / "chroma_az104"
 AZ104_COLLECTION = "microsoft_learn_az104"
+EMBEDDING_BATCH_SIZE = 32
 
 AZ104_PROMPT = ChatPromptTemplate.from_messages(
     [
@@ -49,6 +51,7 @@ def build_az104_store(
         model=embedding_model,
         api_key=api_key,
         base_url=base_url,
+        max_retries=5,
     )
     existing_store = Chroma(
         collection_name=AZ104_COLLECTION,
@@ -56,13 +59,38 @@ def build_az104_store(
         embedding_function=embeddings,
     )
     existing_store.delete_collection()
-    store = Chroma.from_documents(
-        documents=chunks,
-        embedding=embeddings,
-        collection_name=AZ104_COLLECTION,
-        persist_directory=str(AZ104_CHROMA_DIR),
-    )
+    store: Chroma | None = None
+    for start in range(0, len(chunks), EMBEDDING_BATCH_SIZE):
+        store = Chroma.from_documents(
+            documents=chunks[start : start + EMBEDDING_BATCH_SIZE],
+            embedding=embeddings,
+            collection_name=AZ104_COLLECTION,
+            persist_directory=str(AZ104_CHROMA_DIR),
+        )
+    if store is None:
+        raise RuntimeError("No AZ-104 reference chunks were generated.")
     return store, len(documents)
+
+
+def rate_limit_help(error: RateLimitError) -> str:
+    """Explain common API rate-limit causes without exposing provider error details."""
+    body = error.body
+    details = body.get("error", body) if isinstance(body, dict) else {}
+    code = details.get("code") if isinstance(details, dict) else None
+    error_type = details.get("type") if isinstance(details, dict) else None
+    if code == "insufficient_quota" or error_type == "insufficient_quota":
+        return (
+            "The model provider reports that this API key has no available quota. "
+            "Check API billing, credits, and project spending limits in your provider account. "
+            "A ChatGPT subscription does not include API credits. After updating billing, restart "
+            "or redeploy this app."
+        )
+    return (
+        "The model provider rate limit was reached while creating the study index. The app now "
+        "embeds smaller batches and retries transient limits automatically. Wait a few minutes "
+        "and restart the app. If this continues, check the provider's rate limits or select an "
+        "embedding model available to your account."
+    )
 
 
 def answer_az104_question(

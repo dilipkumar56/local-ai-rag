@@ -88,6 +88,10 @@ Streamlit prints a local URL to open in your browser. Use the chat box to ask qu
 
 The public app uses the configured hosted provider for **both** chat and embeddings. Anyone with the URL can submit questions that consume your provider's usage. Set provider spending limits and monitor usage before sharing widely; deployment authentication is not configured by default.
 
+### API rate-limit errors during startup
+
+The initial study index requires embedding API requests. If startup reports that the provider has no available quota, enable API billing or increase the API project's spending limit; a ChatGPT subscription does not include API credits. If the provider reports a temporary rate limit, the app retries requests and indexes smaller batches, so wait briefly and restart the app. Check **Manage app** logs for the provider's precise error code.
+
 ## Official AZ-104 content
 
 The app's curated URLs are maintained in `app/az104_sources.py`. It fetches those public Microsoft Learn pages at runtime rather than committing copies of their content. Use **Refresh Learn content** in the sidebar to rebuild the index; the app also refreshes its cached index periodically. Microsoft Learn pages can change, so check the linked source before relying on a study answer.
