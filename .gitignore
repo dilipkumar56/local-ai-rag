@@ -6,5 +6,6 @@ __pycache__/
 !.env.example
 data/chroma/
 data/chroma_azure/
+data/chroma_az104/
 data/documents/*.pdf
 .vscode/

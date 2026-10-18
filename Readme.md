@@ -1,246 +1,105 @@
-# Local AI and RAG Application
+# Local AI RAG and AZ-104 Study Assistant
 
-A local AI learning project built with Python, Ollama, LangChain, and ChromaDB. The project explores running a local large language model (LLM), loading documents, generating embeddings, retrieving relevant content, and building a retrieval-augmented generation (RAG) workflow.
+This repository includes two ways to use a document-grounded Azure assistant:
 
-## Features
+- A local command-line RAG chat backed by Ollama and your own `.txt`/`.pdf` files.
+- A Streamlit AZ-104 study assistant that retrieves current content from selected official Microsoft Learn pages and uses a hosted OpenAI-compatible model API. The UI can be deployed publicly.
 
-- Run a local LLM using Ollama.
-- Ask general questions without requiring a document database.
-- Load and process PDF documents using LangChain.
-- Generate embeddings using the `nomic-embed-text` model.
-- Store and retrieve document chunks using ChromaDB.
-- Experiment with LangGraph-based RAG workflows.
-- Explore cricket-related tools and content extraction.
-
-## Technology Stack
-
-- Python
-- Ollama
-- Llama 3.2 (3B)
-- Nomic Embed Text
-- LangChain
-- LangGraph
-- ChromaDB
-- PyPDF
-
-## Project Structure
-
-```text
-AI_Proj/
-├── app/
-│   ├── main.py
-│   ├── langchain_app.py
-│   ├── embedding_test.py
-│   ├── pdf_load.py
-│   ├── rag_load.py
-│   ├── rag_chat.py
-│   ├── retrieve.py
-│   ├── graph_rag.py
-│   ├── vector_db.py
-│   └── tools/
-│       ├── cricket.py
-│       └── cricclubs.py
-├── data/
-│   └── documents/
-│       └── azure_vnet.txt
-├── .gitignore
-├── requirements.txt
-└── README.md
-```
-
-*The structure above represents the main project files; your local folders may contain additional files.*
+The assistant uses retrieval-augmented generation (RAG); it does **not** fine-tune or retrain a model. Answers are generated from retrieved reference excerpts and include links to the Microsoft Learn sources used.
 
 ## Prerequisites
 
-Install the following before starting:
+- Python 3.11 or later.
+- For the local CLI assistant: [Ollama](https://ollama.com/download).
+- For the Streamlit assistant: an OpenAI-compatible API account, an API key, and a model provider that supports both chat completions and embeddings.
+- To publish the UI: a GitHub repository and a [Streamlit Community Cloud](https://share.streamlit.io/) account.
 
-- Python 3.11 or another Python version supported by your installed dependencies.
-- Git.
-- Ollama for running models locally.
+## Install
 
-Download Ollama from https://ollama.com/download.
-
-## 1. Clone the Repository
-
-```powershell
-git clone https://github.com/dilipkumar56/local-ai-rag.git
-cd local-ai-rag
-```
-
-## 2. Create a Python Virtual Environment
+From the repository root in PowerShell:
 
 ```powershell
 python -m venv .venv
-```
-
-Activate it in Windows PowerShell:
-
-```powershell
 .\.venv\Scripts\Activate.ps1
-```
-
-Verify Python and pip:
-
-```powershell
-python --version
-python -m pip --version
-```
-
-## 3. Install Python Dependencies
-
-If `requirements.txt` exists:
-
-```powershell
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-If the dependency file has not been created yet, install the packages used by the project:
+## Local CLI assistant
 
-```powershell
-python -m pip install langchain langchain-ollama langchain-chroma langchain-community langchain-text-splitters langgraph chromadb pypdf requests beautifulsoup4
-```
-
-## 4. Download Local AI Models
-
-Download the chat model:
+Pull the Ollama models:
 
 ```powershell
 ollama pull llama3.2:3b
-```
-
-Download the embedding model:
-
-```powershell
 ollama pull nomic-embed-text
 ```
 
-Verify installed models:
+Place your `.txt` and `.pdf` files in `data\Documents\`, then build the local index and start the chat:
 
 ```powershell
-ollama list
-```
-
-## 5. Run the General AI Model
-
-
-For general questions that do not require your own documents, run:
-
-
-
-```powershell
-ollama run llama3.2:3b
-```
-
-Example questions:
-
-
-
-```text
-What is a mango?
-What is cloud computing?
-Explain Azure Virtual Networks.
-What is the difference between Azure and AWS?
-```
-
-Exit the interactive session with:
-
-```text
-/bye
-```
-
-## 6. Run the Python Application
-
-From the repository root, try the main application:
-
-```powershell
+python app\vector_db.py
 python app\main.py
 ```
 
-Other available scripts can be run individually, depending on the workflow you want to test:
+This local workflow uses Ollama and your own documents; it is separate from the hosted AZ-104 study assistant.
+
+## Run the AZ-104 Streamlit app locally
+
+The hosted app downloads selected Microsoft Learn pages when it starts and builds an AZ-104 retrieval index. Set the API key in the current PowerShell session (replace the placeholder; do not commit a real key):
 
 ```powershell
-python app\langchain_app.py
-python app\embedding_test.py
-python app\pdf_load.py
-python app\rag_load.py
-python app\vector_db.py
-python app\retrieve.py
-python app\rag_chat.py
-python app\graph_rag.py
+$env:OPENAI_API_KEY = "your-api-key"
 ```
 
-Each script may perform a different operation. Check the corresponding source file if a script requires a particular model, input document, or existing vector database.
-
-## 7. PDF Processing
-
-Place your PDF in the local document folder, for example:
-
-```text
-data/documents/azure_fundamentals.pdf
-
-
-
-
-
-
-
-
-
-```
-
-Run the PDF loader:
+For an OpenAI-compatible provider other than OpenAI, also set its API base URL and the model names it supports:
 
 ```powershell
-python app\pdf_load.py
+$env:OPENAI_BASE_URL = "https://your-provider.example/v1"
+$env:OPENAI_CHAT_MODEL = "your-chat-model"
+$env:OPENAI_EMBEDDING_MODEL = "your-embedding-model"
 ```
 
-This script loads the PDF, splits its pages into chunks, and prints extracted text and metadata.
+`OPENAI_BASE_URL` is optional when using OpenAI's API. The defaults are `gpt-4o-mini` for chat and `text-embedding-3-small` for embeddings.
 
-To use those chunks for RAG, generate embeddings and store them in ChromaDB using the project's vector database workflow.
-
-## 8. Troubleshooting
-
-### Ollama command is not recognized
-
-Try running Ollama using its Windows installation path:
+Start the interactive study app:
 
 ```powershell
-& "$env:LOCALAPPDATA\Programs\Ollama\ollama.exe" list
+streamlit run app\streamlit_app.py
 ```
 
-### Python package is missing
+Streamlit prints a local URL to open in your browser. Use the chat box to ask questions, follow the Microsoft Learn citations, and use the sidebar to refresh sources or clear the conversation.
 
-Activate the virtual environment and install the required package:
+## Publish a public Streamlit app
+
+1. Push this repository to GitHub.
+2. Sign in to Streamlit Community Cloud and create an app from the repository's `main` branch.
+3. Set the app file path to `app/streamlit_app.py`.
+4. Add the following values in the app's **Secrets** settings. Never commit API keys or a `.streamlit/secrets.toml` file.
+
+   ```toml
+   OPENAI_API_KEY = "your-api-key"
+   # Optional for OpenAI-compatible providers:
+   OPENAI_BASE_URL = "https://your-provider.example/v1"
+   OPENAI_CHAT_MODEL = "your-chat-model"
+   OPENAI_EMBEDDING_MODEL = "your-embedding-model"
+   ```
+
+5. Deploy the app and share the public URL Streamlit provides.
+
+The public app uses the configured hosted provider for **both** chat and embeddings. Anyone with the URL can submit questions that consume your provider's usage. Set provider spending limits and monitor usage before sharing widely; deployment authentication is not configured by default.
+
+## Official AZ-104 content
+
+The app's curated URLs are maintained in `app/az104_sources.py`. It fetches those public Microsoft Learn pages at runtime rather than committing copies of their content. Use **Refresh Learn content** in the sidebar to rebuild the index; the app also refreshes its cached index periodically. Microsoft Learn pages can change, so check the linked source before relying on a study answer.
+
+The app currently covers the certification study guide and selected topics across identity and governance, storage, compute, networking, monitoring, backup, and Azure Resource Manager. It is an exam-preparation aid, not an official Microsoft product, exam dump, or guarantee of passing. Follow the official [AZ-104 study guide](https://learn.microsoft.com/en-us/credentials/certifications/resources/study-guides/az-104) for the current skills measured.
+
+## Tests
+
+Run the unit tests from the activated virtual environment:
 
 ```powershell
-.\.venv\Scripts\Activate.ps1
-python -m pip install PACKAGE_NAME
+python -m unittest discover -s tests
 ```
 
-Replace `PACKAGE_NAME` with the missing package.
-
-### Document or database not found
-
-Run commands from the repository root and verify that the expected files exist under `data/documents/` or that the configured ChromaDB directory has been created.
-
-## Security and Data
-
-- Do not commit API keys, passwords, access tokens, or `.env` files.
-- Do not commit your Python virtual environment.
-- Keep private documents and generated vector databases out of Git unless you have a specific reason to share them.
-- Confirm that you have permission to publish any documents or extracted content.
-
-## Future Improvements
-
-- Add a single interactive Python chat entry point.
-- Build a document-specific RAG chatbot.
-- Add source citations to retrieved answers.
-- Support multiple knowledge bases.
-- Add automated tests and dependency version pinning.
-
-## Author
-
-Dilip Kumar
-
-GitHub: https://github.com/dilipkumar56
+The official-source tests use mocked HTTP responses and do not download Learn pages.
