@@ -8,10 +8,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 from hosted_rag import (
     DEFAULT_CHAT_MODEL,
     _load_source_chunks,
-    answer_az104_question,
+    answer_azure_question,
     clear_learn_source_cache,
     gemini_api_help,
-    rank_source_urls,
     retrieve_relevant_documents,
 )
 
@@ -23,40 +22,16 @@ class HostedRagTests(unittest.TestCase):
     def test_default_chat_model_is_current_available_model(self) -> None:
         self.assertEqual(DEFAULT_CHAT_MODEL, "gemini-3.8-flash")
 
-    def test_ranker_selects_sources_for_acronyms_and_comparison_topics(self) -> None:
-        urls = rank_source_urls("How does Azure RBAC differ from Azure Policy?", limit=5)
-
-        self.assertIn(
-            "https://learn.microsoft.com/en-us/azure/role-based-access-control/overview",
-            urls,
-        )
-        self.assertIn(
-            "https://learn.microsoft.com/en-us/azure/governance/policy/overview",
-            urls,
-        )
-        self.assertLessEqual(len(urls), 5)
-
-    def test_ranker_falls_back_to_az104_study_guide_for_general_questions(self) -> None:
-        urls = rank_source_urls("Can you help me?")
-
-        self.assertEqual(
-            urls,
-            [
-                "https://learn.microsoft.com/en-us/credentials/certifications/"
-                "resources/study-guides/az-104"
-            ],
-        )
-
     @patch("hosted_rag._load_source_chunks")
-    @patch("hosted_rag.rank_source_urls")
+    @patch("hosted_rag.search_official_sources")
     def test_retrieves_only_selected_chunks_and_ranks_by_question_terms(
         self,
-        rank_urls: Mock,
+        search_sources: Mock,
         load_chunks: Mock,
     ) -> None:
         from langchain_core.documents import Document
 
-        rank_urls.return_value = ["selected-url"]
+        search_sources.return_value = (("RBAC docs", "selected-url", "Azure role assignments"),)
         relevant = Document(
             page_content="Azure role assignments use RBAC roles to control access.",
             metadata={"source": "RBAC", "url": "selected-url"},
@@ -70,7 +45,7 @@ class HostedRagTests(unittest.TestCase):
         documents = retrieve_relevant_documents("How does RBAC control access?", k=1)
 
         self.assertEqual(documents, [relevant])
-        rank_urls.assert_called_once_with("How does RBAC control access?", 5)
+        search_sources.assert_called_once_with("How does RBAC control access?", 5)
         load_chunks.assert_called_once_with("selected-url")
 
     @patch("hosted_rag.split_official_sources")
@@ -84,7 +59,7 @@ class HostedRagTests(unittest.TestCase):
         chunks = [Mock()]
         load_source.return_value = document
         split_sources.return_value = chunks
-        url = rank_source_urls("storage redundancy")[0]
+        url = "https://learn.microsoft.com/en-us/azure/storage/common/storage-redundancy"
 
         self.assertEqual(_load_source_chunks(url), tuple(chunks))
         self.assertEqual(_load_source_chunks(url), tuple(chunks))
@@ -115,7 +90,7 @@ class HostedRagTests(unittest.TestCase):
         client = client_factory.return_value.__enter__.return_value
         client.models.generate_content.return_value.text = "RBAC assigns permissions."
 
-        answer, sources = answer_az104_question(
+        answer, sources = answer_azure_question(
             "Why?",
             "test-key",
             "gemini-test-model",
@@ -130,7 +105,7 @@ class HostedRagTests(unittest.TestCase):
         call = client.models.generate_content.call_args
         self.assertEqual(call.kwargs["model"], "gemini-test-model")
         self.assertIn("Microsoft Learn", call.kwargs["contents"])
-        self.assertIn("only the Microsoft Learn", call.kwargs["config"].system_instruction)
+        self.assertIn("Azure questions", call.kwargs["config"].system_instruction)
         client.models.embed_content.assert_not_called()
 
     def test_rate_limit_help_identifies_chat_quota(self) -> None:

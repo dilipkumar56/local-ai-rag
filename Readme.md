@@ -1,9 +1,9 @@
-# Local AI RAG and AZ-104 Study Assistant
+# Local AI RAG and Azure Assistant
 
 This repository includes two ways to use a document-grounded Azure assistant:
 
 - A local command-line RAG chat backed by Ollama and your own `.txt`/`.pdf` files.
-- A Streamlit AZ-104 study assistant that retrieves current content from selected official Microsoft Learn pages and uses the Gemini API for chat and embeddings. The UI can be deployed publicly.
+- A Streamlit Azure assistant that searches official Microsoft Learn documentation for each question and uses the Gemini API to produce answers. The UI can be deployed publicly.
 
 The assistant uses retrieval-augmented generation (RAG); it does **not** fine-tune or retrain a model. Answers are generated from retrieved reference excerpts and include links to the Microsoft Learn sources used.
 
@@ -41,11 +41,11 @@ python app\vector_db.py
 python app\main.py
 ```
 
-This local workflow uses Ollama and your own documents; it is separate from the hosted AZ-104 study assistant.
+This local workflow uses Ollama and your own documents; it is separate from the hosted Azure assistant.
 
-## Run the AZ-104 Streamlit app locally
+## Run the Azure assistant locally
 
-The app chooses relevant pages from its curated Microsoft Learn source list when a question is asked. It fetches and locally caches only those pages, then ranks their text chunks with keyword search. It does not create a full vector index and does not call Gemini's embedding API. Gemini is used only to generate the answer from the selected excerpts. Set the Gemini API key in the current PowerShell session (replace the placeholder; do not commit a real key):
+The app searches Microsoft Learn documentation dynamically for each question, fetches relevant pages, and ranks their text locally. Search results and fetched pages are cached for the running process. It does not create a full vector index or call Gemini's embedding API. Gemini generates answers from the selected excerpts. Set the Gemini API key in the current PowerShell session (replace the placeholder; do not commit a real key):
 
 ```powershell
 $env:GEMINI_API_KEY = "your-gemini-api-key"
@@ -63,7 +63,7 @@ Start the interactive study app:
 streamlit run app\streamlit_app.py
 ```
 
-Streamlit prints a local URL to open in your browser. Use the chat box to ask questions, follow the Microsoft Learn citations, and use the sidebar to refresh sources or clear the conversation.
+Streamlit prints a local URL to open in your browser. Ask about any Azure service or solution, and follow the Microsoft Learn source links shown with each answer. Use the sidebar to refresh search/page caches or clear the conversation.
 
 ## Publish a public Streamlit app
 
@@ -78,22 +78,22 @@ Streamlit prints a local URL to open in your browser. Use the chat box to ask qu
 
 5. Deploy the app and share the public URL Streamlit provides.
 
-The public app uses Gemini for **chat only**. It does not make Gemini embedding calls or build a complete vector index at startup. Anyone with the URL can submit questions that use the project's Gemini chat quota. Review Google's [Gemini API pricing](https://ai.google.dev/gemini-api/docs/pricing) and [rate limits](https://ai.google.dev/gemini-api/docs/rate-limits) before sharing widely; free-tier model availability and limits vary. Deployment authentication is not configured by default.
+The public app uses Microsoft Learn search and Gemini for **chat only**. It does not make Gemini embedding calls or build a complete vector index at startup. Anyone with the URL can submit questions that use the project's Gemini chat quota. Review Google's [Gemini API pricing](https://ai.google.dev/gemini-api/docs/pricing) and [rate limits](https://ai.google.dev/gemini-api/docs/rate-limits) before sharing widely; free-tier model availability and limits vary. Deployment authentication is not configured by default.
 
 ### Source retrieval and caching
 
-For each question the app matches the question against curated Learn page topics, fetches only the
-best-matching pages, and ranks their text locally. Fetched pages are cached in the running app
-process and reused when selected again. **Refresh Learn content** clears that process cache.
-Retrieval uses keyword matching rather than embeddings, so it avoids Gemini's embedding quota;
-Gemini chat still uses tokens to generate the answer. Topic matching is less semantic than vector
-search, so ask about specific Azure services or AZ-104 objectives and check the linked sources.
+For each question the app calls the public Microsoft Learn search API, selects official
+documentation results, fetches those pages, and ranks their text locally. Search results and pages
+are cached in the running app process. **Refresh Learn content** clears those caches. Retrieval
+does not use Gemini embeddings, so it avoids Gemini's embedding quota; Gemini chat still uses
+tokens to generate the answer. Answers include links to the documentation pages used. Check those
+sources for the latest details.
 
-## Official AZ-104 content
+## Microsoft Learn sources
 
-The app's curated URLs are maintained in `app/az104_sources.py`. It fetches those public Microsoft Learn pages at runtime rather than committing copies of their content. Use **Refresh Learn content** in the sidebar to clear the page cache. Microsoft Learn pages can change, so check the linked source before relying on a study answer.
-
-The app currently covers the certification study guide and selected topics across identity and governance, storage, compute, networking, monitoring, backup, and Azure Resource Manager. It is an exam-preparation aid, not an official Microsoft product, exam dump, or guarantee of passing. Follow the official [AZ-104 study guide](https://learn.microsoft.com/en-us/credentials/certifications/resources/study-guides/az-104) for the current skills measured.
+The app searches Microsoft Learn documentation across Azure services rather than relying on a
+fixed set of articles. Search results and article URLs are restricted to `learn.microsoft.com`.
+Microsoft Learn pages can change, so use the linked source pages to verify product behavior.
 
 ## Tests
 
